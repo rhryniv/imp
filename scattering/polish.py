@@ -27,7 +27,7 @@ def _G_and_grad(a: np.ndarray, theta: np.ndarray, m: np.ndarray):
     return G, dG
 
 
-def polish_design(a0, J0, J1, mu0, sigma, n_grid_A=1600, n_grid_local=600, maxiter=500):
+def polish_design(a0, J0, J1, mu0, sigma, n_grid_A=600, n_grid_local=300, maxiter=300, n_restarts=5):
     """Refine a0 (from the SDP relaxation) into a locally-optimal, feasible
     solution of the true nonconvex problem via SLSQP on a dense grid.
 
@@ -103,26 +103,18 @@ def polish_design(a0, J0, J1, mu0, sigma, n_grid_A=1600, n_grid_local=600, maxit
     u0 = max(1.0 + 1e-9, Gmax_pass)
     x0 = np.concatenate([a0, [u0]])
 
-    res = minimize(objective, x0, jac=objective_grad, constraints=constraints,
-                    method="SLSQP", options={"maxiter": maxiter, "ftol": 1e-14})
-    if res.status != 0:
-        # SLSQP occasionally stalls on a bad line search; trust-constr is
-        # slower but much more robust, use it as a fallback from the same
-        # (or SLSQP's improved) starting point.
-        x0b = res.x if np.all(np.isfinite(res.x)) else x0
-        res2 = minimize(objective, x0b, jac=objective_grad,
-                         constraints=[_as_trust_constr(cn) for cn in constraints],
-                         method="trust-constr",
-                         options={"maxiter": 3000, "gtol": 1e-12, "xtol": 1e-14})
-        if res2.fun <= res.fun or res.status != 0:
-            res = res2
-    a_pol, u_pol = res.x[:-1], res.x[-1]
-    return a_pol, float(u_pol), res
-
-
-def _as_trust_constr(cdict):
-    from scipy.optimize import NonlinearConstraint
-    fun, jac = cdict["fun"], cdict["jac"]
-    if cdict["type"] == "ineq":
-        return NonlinearConstraint(fun, 0.0, np.inf, jac=jac)
-    return NonlinearConstraint(fun, 0.0, 0.0, jac=jac)
+    best = None
+    rng = np.random.default_rng(0)
+    x_try = x0
+    for attempt in range(n_restarts):
+        res = minimize(objective, x_try, jac=objective_grad, constraints=constraints,
+                        method="SLSQP", options={"maxiter": maxiter, "ftol": 1e-14})
+        if best is None or (np.isfinite(res.fun) and res.fun < best.fun):
+            best = res
+        if res.status == 0:
+            break
+        # small random perturbation of the warm start for the next attempt
+        x_try = x0.copy()
+        x_try[:-1] += 1e-3 * rng.standard_normal(n + 1)
+    a_pol, u_pol = best.x[:-1], best.x[-1]
+    return a_pol, float(u_pol), best
