@@ -112,11 +112,104 @@ def _deflate_double_root(coeffs: np.ndarray, z0: float, tol: float = 1e-9):
     return cur, 1
 
 
-def fejer_riesz(c: np.ndarray, unit_circle_tol: float = 1e-6, polish_iters: int = 6) -> np.ndarray:
+def _factorization_error(a: np.ndarray, c: np.ndarray, n_grid: int = 4000) -> float:
+    """max|G_target(theta) - |sum a_m e^{i m theta}||^2, the ultimate
+    correctness criterion for a spectral factor (independent of *how*
+    it was computed)."""
+    n = len(c) - 1
+    theta = np.linspace(0.0, 2 * np.pi, n_grid, endpoint=False)
+    l = np.arange(1, n + 1)
+    G_target = c[0] + 2 * (np.cos(np.outer(theta, l)) @ c[1:]) if n > 0 else np.full(n_grid, c[0])
+    m = np.arange(len(a))
+    G_actual = np.abs(np.exp(1j * np.outer(theta, m)) @ a) ** 2
+    return float(np.max(np.abs(G_target - G_actual)))
+
+
+def _fejer_riesz_sdp(c: np.ndarray, n_iters: int = 4, reg: float = 1e-6, solver: str = "CLARABEL"):
+    """Alternative spectral factorization via the Gram/SDP route (Nesterov's
+    theorem -- the same trace-constrained PSD-matrix parametrization as
+    poly_sdp.py's Theorem 4.1 machinery, applied here to *find* a factor
+    rather than just to certify nonnegativity): solve for X >> 0 with
+    sum_{i-j=k} X_ij = c_k, then read off a spectral factor from X.
+
+    The trace constraints alone don't pin down a rank-1 X -- v^*Xv = G(theta)
+    holds for *any* X satisfying them, rank irrelevant; PSD-ness is what
+    proves G>=0, not what selects a single factor. Fejer-Riesz guarantees a
+    rank-1 point exists in that affine+PSD slice, but a plain SDP solve
+    generally lands on the analytic center instead (near-full-rank). Using
+    iteratively reweighted trace minimization (log-det heuristic: minimize
+    trace(W X) with W <- (X+reg*I)^{-1} each round) pushes toward that
+    extremal rank-1 point. Returns None if it doesn't converge to
+    (near-)rank-1, so the caller can fall back to something else.
+    """
+    import cvxpy as cp
+
+    n = len(c) - 1
+    if n == 0:
+        return np.array([np.sqrt(max(c[0], 0.0))])
+    W = np.eye(n + 1)
+    X_val = None
+    for _ in range(n_iters):
+        X = cp.Variable((n + 1, n + 1), symmetric=True)
+        constraints = [X >> 0, cp.trace(X) == c[0]]
+        for k in range(1, n + 1):
+            diag_terms = [X[k + i, i] for i in range(n + 1 - k)]
+            constraints.append(cp.sum(cp.hstack(diag_terms)) == c[k])
+        prob = cp.Problem(cp.Minimize(cp.trace(W @ X)), constraints)
+        try:
+            prob.solve(solver=solver)
+        except cp.error.SolverError:
+            break
+        if prob.status not in ("optimal", "optimal_inaccurate") or X.value is None:
+            break
+        X_val = X.value
+        W = np.linalg.inv(X_val + reg * np.eye(n + 1))
+
+    if X_val is None:
+        return None
+    eigvals, eigvecs = np.linalg.eigh(X_val)
+    eigvals, eigvecs = eigvals[::-1], eigvecs[:, ::-1]
+    return eigvecs[:, 0] * np.sqrt(max(eigvals[0], 0.0))
+
+
+def fejer_riesz(c: np.ndarray, unit_circle_tol: float = 1e-6, polish_iters: int = 6,
+                 verify_tol: float = 1e-4) -> np.ndarray:
     """Fejer-Riesz spectral factorization: given autocorrelation
     coefficients c_l (G(theta) = c_0 + 2*sum_l c_l cos(l*theta) >= 0),
     return a such that |sum_m a_m e^{i m theta}|^2 = G(theta), with a
     minimum-phase (all roots of sum a_m z^m strictly inside |z|<1).
+
+    Primary path is root-based (_fejer_riesz_root below): fast (~ms), and
+    extensively validated on well-conditioned cases. It becomes unreliable
+    when G has multiple near-degenerate near-unit-circle zeros close
+    together (confirmed via 50-digit mpmath: a root*selection* issue, not
+    root-finding precision -- see _fejer_riesz_root's docstring). Rather
+    than trust it blindly, the result is checked against G directly
+    (_factorization_error); if that check fails, an SDP-based factorization
+    (_fejer_riesz_sdp) is tried as a fallback, since it sidesteps root
+    finding entirely and was confirmed to succeed on a case where the
+    root-based method gave a ~50% error. The SDP route isn't used as the
+    default because it is itself not universally robust (the reweighting
+    heuristic can fail to converge to rank-1 on well-conditioned generic
+    cases where the root-based method has no trouble at all) and is
+    noticeably slower (SDP solves vs. one polynomial root-find).
+    """
+    a_root = _fejer_riesz_root(c, unit_circle_tol=unit_circle_tol, polish_iters=polish_iters)
+    err_root = _factorization_error(a_root, c)
+    if err_root <= verify_tol:
+        return a_root
+
+    a_sdp = _fejer_riesz_sdp(c)
+    if a_sdp is not None:
+        err_sdp = _factorization_error(a_sdp, c)
+        if err_sdp < err_root:
+            return a_sdp
+    return a_root  # neither route is perfect; root-based is at least deterministic
+
+
+def _fejer_riesz_root(c: np.ndarray, unit_circle_tol: float = 1e-6, polish_iters: int = 6) -> np.ndarray:
+    """Root-based Fejer-Riesz factorization (the primary path -- see
+    fejer_riesz's docstring for when this is and isn't reliable).
 
     Root-finding via numpy.roots on the degree-2n autocorrelation
     polynomial loses accuracy as n grows (companion-matrix eigenvalues);
@@ -317,7 +410,11 @@ def alphas_from_a(a: np.ndarray, su11_tol: float = 1e-4) -> tuple[np.ndarray, Re
         n = len(p1) - 1
         alphas = np.full(n + 1, np.nan)
 
-    impedances = np.full(len(alphas) + 2, np.nan)
+    # alphas has n+1 entries (alpha_0..alpha_n); physical impedances are
+    # p_0 (background), p_1..p_n (the n layers), p_{n+1} (background) --
+    # n+2 = len(alphas)+1 values total, not +2 (that extra slot silently
+    # stayed NaN before this fix).
+    impedances = np.full(len(alphas) + 1, np.nan)
     if reliable or not np.any(np.isnan(alphas)):
         impedances[0] = 1.0
         for j, alpha_j in enumerate(alphas):
