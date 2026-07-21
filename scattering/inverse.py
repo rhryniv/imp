@@ -1,0 +1,240 @@
+"""Inverse problem: a -> (q_1, q_2) -> alpha's.
+
+a = (a_0, ..., a_n) is a candidate q~_1 coefficient vector (sum(a) = 1).
+This module turns it into a physical layer sequence, or explains why it
+can't: admissibility (constraint A), minimum-phase / realizability
+(Theorem 4.6), spectral factorization (Fejer-Riesz), and layer stripping
+(the Schur recursion of Theorem 4.6).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from .forward import q1_abs_sq
+
+
+def check_admissibility(a: np.ndarray, n_grid: int = 10000) -> tuple[bool, float]:
+    """G(theta) = |q~_1(theta)|^2 >= 1 for all theta (constraint A)?"""
+    theta = np.linspace(0.0, 2 * np.pi, n_grid, endpoint=False)
+    G = q1_abs_sq(a, theta)
+    G_min = float(np.min(G))
+    return G_min >= 1.0 - 1e-8, G_min
+
+
+def check_min_phase(a: np.ndarray, tol: float = 1e-6) -> tuple[bool, np.ndarray]:
+    """Do all roots of q~_1(z) = sum a_m z^m lie strictly inside |z| < 1?
+
+    This is exactly Theorem 4.6's zero-free-in-the-closed-disc hypothesis
+    on p1(w) = sum a_{n-m} w^m, translated to q~_1: p1(w) = w^n q~_1(1/w),
+    so p1's roots are the reciprocals of q~_1's roots, and "p1 zero-free in
+    |w|<=1" <=> "all roots of q~_1 satisfy |z|<1".
+    """
+    a = np.asarray(a, dtype=float)
+    n = len(a) - 1
+    if n == 0:
+        return True, np.array([])
+    roots = np.roots(a[::-1])
+    return bool(np.all(np.abs(roots) < 1.0 + tol)), roots
+
+
+def ensure_min_phase(a: np.ndarray, tol: float = 1e-9) -> tuple[np.ndarray, bool]:
+    """Project a onto the minimum-phase representative of the same
+    G = |q~_1|^2, if it isn't one already.
+
+    Constraint (A) alone (|q~_1| >= 1 on the circle) does *not* imply
+    zero-freeness inside the disc: e.g. a=[3,2] and a=[2,3] give the same
+    |q~_1| on the circle, but only one has its root inside. So whatever
+    produced `a` (an SDP relaxation, a local optimizer, ...) must be
+    checked, not assumed. All branches share the same G; reflecting an
+    outside root z0 to its conjugate reciprocal 1/conj(z0) leaves G
+    unchanged. NOTE: this generally changes kappa_B = Re(q~_1) (it is a
+    *different* function with the same magnitude on the circle -- see
+    check_admissibility vs. constraint (C)), so re-verify (C) afterwards.
+
+    Returns (a_projected, was_reflected).
+    """
+    ok, _ = check_min_phase(a, tol=tol)
+    if ok:
+        return np.asarray(a, dtype=float).copy(), False
+    a = np.asarray(a, dtype=float)
+    n = len(a) - 1
+    c = np.array([np.sum(a[: n + 1 - l] * a[l:]) for l in range(n + 1)])
+    a_mp = fejer_riesz(c)
+    a_mp = a_mp * (np.sum(a) / np.sum(a_mp))  # keep the same overall sign/normalization
+    return a_mp, True
+
+
+def _polish_roots(coeffs_increasing: np.ndarray, roots: np.ndarray, iters: int = 6) -> np.ndarray:
+    """A few Newton iterations to refine roots found via companion-matrix
+    eigenvalues (numpy.roots), which lose accuracy at higher degree,
+    especially for clustered/near-multiple roots."""
+    coeffs_dec = coeffs_increasing[::-1]           # numpy.polyval wants highest power first
+    d = len(coeffs_increasing) - 1
+    deriv_dec = coeffs_dec[:-1] * np.arange(d, 0, -1)
+    z = roots.copy()
+    for _ in range(iters):
+        p_val = np.polyval(coeffs_dec, z)
+        dp_val = np.polyval(deriv_dec, z)
+        step = np.where(np.abs(dp_val) > 1e-14, p_val / np.where(dp_val == 0, 1, dp_val), 0.0)
+        z = z - step
+    return z
+
+
+def _autocorr_to_full_poly(c: np.ndarray) -> np.ndarray:
+    """c (len n+1) -> coeffs (len 2n+1, increasing powers) of z^n * G(theta)|_{z=e^{i theta}}."""
+    n = len(c) - 1
+    coeffs = np.zeros(2 * n + 1)
+    coeffs[n] = c[0]
+    for l in range(1, n + 1):
+        coeffs[n - l] += c[l]
+        coeffs[n + l] += c[l]
+    return coeffs
+
+
+def fejer_riesz(c: np.ndarray, unit_circle_tol: float = 1e-6, polish_iters: int = 6) -> np.ndarray:
+    """Fejer-Riesz spectral factorization: given autocorrelation
+    coefficients c_l (G(theta) = c_0 + 2*sum_l c_l cos(l*theta) >= 0),
+    return a such that |sum_m a_m e^{i m theta}|^2 = G(theta), with a
+    minimum-phase (all roots of sum a_m z^m strictly inside |z|<1).
+
+    Root-finding via numpy.roots on the degree-2n autocorrelation
+    polynomial loses accuracy as n grows (companion-matrix eigenvalues);
+    each root is refined with a few Newton steps before the inside/outside
+    split, which matters once n gtrsim 8.
+    """
+    c = np.asarray(c, dtype=float)
+    n = len(c) - 1
+    if n == 0:
+        return np.array([np.sqrt(max(c[0], 0.0))])
+
+    coeffs = _autocorr_to_full_poly(c)
+    roots = np.roots(coeffs[::-1])
+    roots = _polish_roots(coeffs, roots, iters=polish_iters)
+    mags = np.abs(roots)
+
+    on_circle = np.abs(mags - 1.0) <= unit_circle_tol
+    inside = (~on_circle) & (mags < 1.0)
+    outside = (~on_circle) & (mags >= 1.0)
+
+    chosen = list(roots[inside])
+    n_needed = n - len(chosen)
+
+    if np.any(on_circle):
+        chosen += _half_of_unit_circle_roots(roots[on_circle], n_needed)
+    elif n_needed > 0:
+        rest = roots[outside]
+        order = np.argsort(np.abs(rest))
+        chosen += list(rest[order[:n_needed]])
+
+    chosen = np.array(chosen[:n])
+    poly = np.poly(chosen)[::-1].real   # increasing powers, monic; roots come in conjugate pairs -> real
+
+    scale_sq = c[0] / np.sum(poly ** 2)
+    if scale_sq < 0:
+        raise RuntimeError("negative scale in spectral factorization; G may not be nonnegative")
+    return np.sqrt(scale_sq) * poly
+
+
+def _half_of_unit_circle_roots(unit_roots: np.ndarray, n_needed: int, cluster_tol: float = 1e-4):
+    """G real & >=0 forces roots on |z|=1 to occur with even multiplicity
+    (complex-conjugate pairs, or a real double root at z=+-1). Cluster by
+    angle and keep half the multiplicity of each cluster."""
+    angles = np.angle(unit_roots)
+    order = np.argsort(angles)
+    angles_sorted, roots_sorted = angles[order], unit_roots[order]
+
+    clusters, cur = [], [roots_sorted[0]]
+    for r, ang in zip(roots_sorted[1:], angles_sorted[1:]):
+        if abs(ang - np.angle(cur[-1])) <= cluster_tol:
+            cur.append(r)
+        else:
+            clusters.append(cur)
+            cur = [r]
+    clusters.append(cur)
+    if len(clusters) > 1 and abs((angles_sorted[0] + 2 * np.pi) - np.angle(clusters[-1][-1])) <= cluster_tol:
+        clusters[0] = clusters[-1] + clusters[0]
+        clusters.pop()
+
+    chosen = []
+    for cl in clusters:
+        chosen += list(cl[: len(cl) // 2])
+    if len(chosen) != n_needed:
+        chosen = [r for cl in clusters for r in cl][:n_needed]
+    return chosen
+
+
+def p2_from_a(a: np.ndarray) -> np.ndarray:
+    """A spectral factor of F(theta) = |q~_1(theta)|^2 - 1 = |q_2(theta)|^2
+    (Remark 4.9: any spectral factor is admissible here, unlike q~_1
+    itself -- this is the genuine, physically-meaningful freedom: it
+    changes the realized alpha_j/impedances but not kappa_B or T_N)."""
+    a = np.asarray(a, dtype=float)
+    n = len(a) - 1
+    c = np.array([np.sum(a[: n + 1 - l] * a[l:]) for l in range(n + 1)])
+    c[0] -= 1.0
+    return fejer_riesz(c)
+
+
+def schur_strip(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
+    """Theorem 4.6's Schur/layer-peeling recursion. p1, p2: real coeff
+    vectors (increasing powers of w), length n+1, |p1|^2-|p2|^2=1 on
+    |w|=1, p1 zero-free in the closed unit disc. Returns
+    alphas = (alpha_0,...,alpha_n)."""
+    P1 = np.asarray(p1, dtype=float).copy()
+    P2 = np.asarray(p2, dtype=float).copy()
+    n = len(P1) - 1
+    if len(P2) != n + 1:
+        raise ValueError("p1 and p2 must have the same length")
+    alphas = np.zeros(n + 1)
+    for j in range(n, 0, -1):
+        ratio = P2[0] / P1[0]
+        if abs(ratio) >= 1.0:
+            raise RuntimeError(f"Schur parameter out of (-1,1) at step j={j}: {ratio}")
+        alpha_j = np.arctanh(ratio)
+        alphas[j] = alpha_j
+        ch, sh = np.cosh(alpha_j), np.sinh(alpha_j)
+        newP1 = ch * P1 - sh * P2       # degree <= j-1: newP1[j] ~ 0
+        newP2 = ch * P2 - sh * P1       # newP2[0] ~ 0 by construction of alpha_j
+        P1 = newP1[:j]
+        P2 = newP2[1 : j + 1]
+    alphas[0] = np.arctanh(P2[0] / P1[0])
+    return alphas
+
+
+@dataclass
+class RealizabilityInfo:
+    admissible: bool
+    G_min: float
+    was_reflected: bool
+    a_used: np.ndarray = field(default_factory=lambda: np.array([]))  # min-phase a actually stripped
+    impedances: np.ndarray = field(default_factory=lambda: np.array([]))
+    reconstruction_error: float = float("nan")
+
+
+def alphas_from_a(a: np.ndarray) -> tuple[np.ndarray, RealizabilityInfo]:
+    """Full pipeline: a -> check admissibility -> ensure min-phase ->
+    (p1, p2) -> Schur-strip -> alphas, physical impedances, diagnostics."""
+    from .forward import forward_reconstruct  # local import: forward.py doesn't import inverse.py
+
+    admissible, G_min = check_admissibility(a)
+    a_mp, was_reflected = ensure_min_phase(a)
+
+    p1 = a_mp[::-1].copy()
+    p2 = p2_from_a(a_mp)
+    alphas = schur_strip(p1, p2)
+
+    impedances = np.empty(len(alphas) + 2)
+    impedances[0] = 1.0
+    for j, alpha_j in enumerate(alphas):
+        impedances[j + 1] = impedances[j] * np.exp(alpha_j)
+
+    p1_chk, p2_chk = forward_reconstruct(alphas)
+    err = max(np.max(np.abs(p1_chk - p1)), np.max(np.abs(p2_chk - p2)))
+
+    info = RealizabilityInfo(
+        admissible=admissible, G_min=G_min, was_reflected=was_reflected,
+        a_used=a_mp, impedances=impedances, reconstruction_error=float(err),
+    )
+    return alphas, info
