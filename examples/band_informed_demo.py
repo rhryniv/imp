@@ -53,7 +53,7 @@ def main():
     # N), so a small, easy target is used; N does the work of reaching a
     # given attenuation level afterwards (Step 4 of the synthesis algorithm).
     mu0 = 0.05
-    N_values = (5, 10, 20)
+    N_values = (1, 3, 5)
 
     th0 = np.linspace(*I0[0], 4000)
     th1 = np.linspace(*I1[0], 4000)
