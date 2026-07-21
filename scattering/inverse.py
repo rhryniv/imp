@@ -93,6 +93,25 @@ def _autocorr_to_full_poly(c: np.ndarray) -> np.ndarray:
     return coeffs
 
 
+def _deflate_double_root(coeffs: np.ndarray, z0: float, tol: float = 1e-9):
+    """If z0 (+-1) is a double root of coeffs (increasing powers), divide it
+    out exactly (twice) via polynomial division and return the deflated
+    coefficients; else return coeffs unchanged. z0=+-1 is checked exactly
+    (no root-finding needed): coeffs evaluated at +-1 via alternating/plain
+    sum, which is what makes this deflation possible and numerically exact
+    in the first place."""
+    from numpy.polynomial import polynomial as Pp
+    factor = np.array([-z0, 1.0])
+    cur = coeffs
+    for _ in range(2):
+        if abs(np.polyval(cur[::-1], z0)) > tol * max(1.0, np.max(np.abs(cur))):
+            return coeffs, 0
+        cur, rem = Pp.polydiv(cur, factor)
+        if np.max(np.abs(rem)) > tol * max(1.0, np.max(np.abs(coeffs))):
+            return coeffs, 0
+    return cur, 1
+
+
 def fejer_riesz(c: np.ndarray, unit_circle_tol: float = 1e-6, polish_iters: int = 6) -> np.ndarray:
     """Fejer-Riesz spectral factorization: given autocorrelation
     coefficients c_l (G(theta) = c_0 + 2*sum_l c_l cos(l*theta) >= 0),
@@ -102,7 +121,16 @@ def fejer_riesz(c: np.ndarray, unit_circle_tol: float = 1e-6, polish_iters: int 
     Root-finding via numpy.roots on the degree-2n autocorrelation
     polynomial loses accuracy as n grows (companion-matrix eigenvalues);
     each root is refined with a few Newton steps before the inside/outside
-    split, which matters once n gtrsim 8.
+    split, which matters once n gtrsim 8. This matters most exactly at
+    z=+-1: G(0) = (sum a_m)^2 is often forced to a fixed value by
+    normalization (e.g. F = G-1 in p2_from_a has F(0) = 0 *identically*,
+    since q~_1(0)=1 is required of every valid design), so a guaranteed
+    *double* root sits right at z=1 -- and double roots are exactly what
+    companion-matrix eigenvalues resolve worst (perturbations of order
+    sqrt(machine epsilon), not epsilon). Whenever G(+-1) essentially
+    vanishes, that double root is deflated out exactly (via polynomial
+    division, no root-finding needed) before touching the rest with
+    numpy.roots, which removes the worst-conditioned part of the problem.
     """
     c = np.asarray(c, dtype=float)
     n = len(c) - 1
@@ -110,15 +138,21 @@ def fejer_riesz(c: np.ndarray, unit_circle_tol: float = 1e-6, polish_iters: int 
         return np.array([np.sqrt(max(c[0], 0.0))])
 
     coeffs = _autocorr_to_full_poly(c)
-    roots = np.roots(coeffs[::-1])
-    roots = _polish_roots(coeffs, roots, iters=polish_iters)
+    forced = []
+    for z0 in (1.0, -1.0):
+        coeffs, got = _deflate_double_root(coeffs, z0)
+        if got:
+            forced.append(z0)
+
+    roots = np.roots(coeffs[::-1]) if len(coeffs) > 1 else np.array([])
+    roots = _polish_roots(coeffs, roots, iters=polish_iters) if len(roots) else roots
     mags = np.abs(roots)
 
     on_circle = np.abs(mags - 1.0) <= unit_circle_tol
     inside = (~on_circle) & (mags < 1.0)
     outside = (~on_circle) & (mags >= 1.0)
 
-    chosen = list(roots[inside])
+    chosen = list(roots[inside]) + forced
     n_needed = n - len(chosen)
 
     if np.any(on_circle):
@@ -165,15 +199,30 @@ def _half_of_unit_circle_roots(unit_roots: np.ndarray, n_needed: int, cluster_to
     return chosen
 
 
-def p2_from_a(a: np.ndarray) -> np.ndarray:
+def p2_from_a(a: np.ndarray, n_grid: int = 20000) -> np.ndarray:
     """A spectral factor of F(theta) = |q~_1(theta)|^2 - 1 = |q_2(theta)|^2
     (Remark 4.9: any spectral factor is admissible here, unlike q~_1
     itself -- this is the genuine, physically-meaningful freedom: it
-    changes the realized alpha_j/impedances but not kappa_B or T_N)."""
+    changes the realized alpha_j/impedances but not kappa_B or T_N).
+
+    Fejer-Riesz needs F >= 0 *exactly*; an upstream a that only satisfies
+    constraint (A) to some optimizer tolerance (e.g. from sdp_design's
+    local polish) can leave F slightly negative at isolated points (found
+    empirically: dips as small as -1e-7 are enough to make root-finding
+    badly inconsistent right there, since there is no genuine real
+    factorization to find in a neighborhood of a true sign violation).
+    F is floored by shifting c_0 up by just enough to cover the worst
+    dip found on a fine grid (plus a small safety margin), which is the
+    minimal correction that restores a well-posed problem.
+    """
     a = np.asarray(a, dtype=float)
     n = len(a) - 1
     c = np.array([np.sum(a[: n + 1 - l] * a[l:]) for l in range(n + 1)])
     c[0] -= 1.0
+    theta = np.linspace(0.0, 2 * np.pi, n_grid, endpoint=False)
+    F_min = float(np.min(q1_abs_sq(a, theta) - 1.0))
+    if F_min < 0:
+        c[0] += -F_min + 1e-12
     return fejer_riesz(c)
 
 
@@ -211,11 +260,40 @@ class RealizabilityInfo:
     a_used: np.ndarray = field(default_factory=lambda: np.array([]))  # min-phase a actually stripped
     impedances: np.ndarray = field(default_factory=lambda: np.array([]))
     reconstruction_error: float = float("nan")
+    su11_error: float = float("nan")   # max|p1|^2-|p2|^2-1| on the circle; large => p2 is untrustworthy
+    reliable: bool = True              # False if p2_from_a's factorization looks broken (see su11_error)
+    failure: str | None = None         # human-readable reason, set only when reliable=False
 
 
-def alphas_from_a(a: np.ndarray) -> tuple[np.ndarray, RealizabilityInfo]:
+def _su11_error(p1: np.ndarray, p2: np.ndarray, n_grid: int = 4000) -> float:
+    theta = np.linspace(0, 2 * np.pi, n_grid)
+    z = np.exp(1j * theta)
+    m1, m2 = np.arange(len(p1)), np.arange(len(p2))
+    p1v = (z[:, None] ** m1) @ p1
+    p2v = (z[:, None] ** m2) @ p2
+    return float(np.max(np.abs(np.abs(p1v) ** 2 - np.abs(p2v) ** 2 - 1.0)))
+
+
+def alphas_from_a(a: np.ndarray, su11_tol: float = 1e-4) -> tuple[np.ndarray, RealizabilityInfo]:
     """Full pipeline: a -> check admissibility -> ensure min-phase ->
-    (p1, p2) -> Schur-strip -> alphas, physical impedances, diagnostics."""
+    (p1, p2) -> Schur-strip -> alphas, physical impedances, diagnostics.
+
+    KNOWN OPEN ISSUE: p2_from_a's root-based spectral factorization of
+    F=G-1 can become unreliable for highly-optimized/near-degenerate
+    designs, where F touches down close to zero at several points (or, if
+    an upstream optimizer's tolerance let F dip slightly negative, two
+    nearby simple real crossings appear instead of one clean double root)
+    -- the root-selection logic can then pick a non-conjugate-symmetric
+    set, producing a wrong (non-real-consistent) p2. This is *not* a
+    root-finding precision issue (checked against 50-digit mpmath: same
+    roots to 13+ digits) -- it's a combinatorial selection issue that
+    remains open. Rather than silently return wrong alphas/impedances,
+    the SU(1,1) identity |p1|^2-|p2|^2=1 is checked directly on the
+    returned p2; if it's violated beyond su11_tol, `reliable=False` and
+    `failure` explains why (alphas/impedances are still populated
+    best-effort, from whatever schur_strip could do, but should not be
+    trusted).
+    """
     from .forward import forward_reconstruct  # local import: forward.py doesn't import inverse.py
 
     admissible, G_min = check_admissibility(a)
@@ -223,18 +301,37 @@ def alphas_from_a(a: np.ndarray) -> tuple[np.ndarray, RealizabilityInfo]:
 
     p1 = a_mp[::-1].copy()
     p2 = p2_from_a(a_mp)
-    alphas = schur_strip(p1, p2)
+    su11_err = _su11_error(p1, p2)
+    reliable, failure = True, None
+    if su11_err > su11_tol:
+        reliable = False
+        failure = (f"|p1|^2-|p2|^2 deviates from 1 by up to {su11_err:.2e} "
+                   "(> su11_tol); p2's spectral factorization is unreliable here "
+                   "(see alphas_from_a docstring) -- alphas/impedances below are not trustworthy.")
 
-    impedances = np.empty(len(alphas) + 2)
-    impedances[0] = 1.0
-    for j, alpha_j in enumerate(alphas):
-        impedances[j + 1] = impedances[j] * np.exp(alpha_j)
+    try:
+        alphas = schur_strip(p1, p2)
+    except RuntimeError as e:
+        reliable = False
+        failure = (failure + " " if failure else "") + f"schur_strip also failed: {e}"
+        n = len(p1) - 1
+        alphas = np.full(n + 1, np.nan)
 
-    p1_chk, p2_chk = forward_reconstruct(alphas)
-    err = max(np.max(np.abs(p1_chk - p1)), np.max(np.abs(p2_chk - p2)))
+    impedances = np.full(len(alphas) + 2, np.nan)
+    if reliable or not np.any(np.isnan(alphas)):
+        impedances[0] = 1.0
+        for j, alpha_j in enumerate(alphas):
+            impedances[j + 1] = impedances[j] * np.exp(alpha_j)
+
+    if not np.any(np.isnan(alphas)):
+        p1_chk, p2_chk = forward_reconstruct(alphas)
+        err = max(np.max(np.abs(p1_chk - p1)), np.max(np.abs(p2_chk - p2)))
+    else:
+        err = float("nan")
 
     info = RealizabilityInfo(
         admissible=admissible, G_min=G_min, was_reflected=was_reflected,
         a_used=a_mp, impedances=impedances, reconstruction_error=float(err),
+        su11_error=su11_err, reliable=reliable, failure=failure,
     )
     return alphas, info

@@ -55,7 +55,7 @@ from scipy.optimize import minimize
 
 from .poly_sdp import cheb_to_mono_matrix, interval_nonneg_constraints
 from .forward import kappa_B, transmission_TN, q1_abs_sq
-from .inverse import fejer_riesz, alphas_from_a
+from .inverse import fejer_riesz, alphas_from_a, ensure_min_phase, check_min_phase
 
 Interval = tuple[float, float]
 
@@ -160,6 +160,7 @@ class FullDesignResult:
     delta1: float | None = None
     tightness_ratio: float | None = None
     polish_verified: bool | None = None    # did the polish actually reach a feasible point?
+    min_phase: bool | None = None          # is .a already realizable (Thm 4.6), no reflection needed?
     problem: cp.Problem | None = None
     J0: Sequence[Interval] = field(default_factory=list)
     J1: Sequence[Interval] = field(default_factory=list)
@@ -260,25 +261,52 @@ def _polish(a0: np.ndarray, J0: Sequence[Interval], J1: Sequence[Interval], mu0:
     u0 = max(1.0 + 1e-9, Gmax_pass)
     rng = np.random.default_rng(seed)
 
-    best_verified, best_any = None, None
-    for attempt in range(n_restarts):
-        noise = 0.02 * rng.standard_normal(n + 1) if attempt > 0 else 0.0
-        x0 = np.concatenate([a0 + noise, [u0]])
-        res = minimize(objective, x0, jac=objective_grad, constraints=constraints,
-                        method="SLSQP", options={"maxiter": maxiter, "ftol": 1e-14})
-        if not np.all(np.isfinite(res.x)):
-            continue
-        a_try, u_try = res.x[:-1], float(res.x[-1])
-        if verify(a_try, u_try):
-            if best_verified is None or u_try < best_verified[1]:
-                best_verified = (a_try, u_try)
-        if best_any is None or res.fun < best_any[1]:
-            best_any = (a_try, u_try)
+    def run_attempts(seeds):
+        """seeds: list of warm-start a-vectors. Returns (verified_mp, verified_any, any_)
+        each a list of (a, u) sorted by u ascending, or empty."""
+        verified_mp, verified_any, any_ = [], [], []
+        for x0_a in seeds:
+            x0 = np.concatenate([x0_a, [u0]])
+            res = minimize(objective, x0, jac=objective_grad, constraints=constraints,
+                            method="SLSQP", options={"maxiter": maxiter, "ftol": 1e-14})
+            if not np.all(np.isfinite(res.x)):
+                continue
+            a_try, u_try = res.x[:-1], float(res.x[-1])
+            any_.append((a_try, u_try))
+            if verify(a_try, u_try):
+                verified_any.append((a_try, u_try))
+                if check_min_phase(a_try)[0]:
+                    verified_mp.append((a_try, u_try))
+        verified_mp.sort(key=lambda t: t[1])
+        verified_any.sort(key=lambda t: t[1])
+        any_.sort(key=lambda t: t[1])
+        return verified_mp, verified_any, any_
 
-    if best_verified is not None:
-        return best_verified[0], best_verified[1], True
-    if best_any is not None:
-        return best_any[0], best_any[1], False
+    seeds = [a0] + [np.clip(a0 + 0.02 * rng.standard_normal(n + 1), -10, 10) for _ in range(n_restarts - 1)]
+    vmp, vany, anyc = run_attempts(seeds)
+
+    if not vmp and vany:
+        # Found constraint-feasible points, but none already realizable
+        # (minimum-phase). Reflecting onto the realizable branch generally
+        # breaks (C) (kappa_B changes under reflection -- see
+        # inverse.ensure_min_phase), so instead re-polish *from* the
+        # reflection, hoping SLSQP finds a nearby min-phase-preserving
+        # local optimum rather than drifting back off it.
+        reflect_seeds = [ensure_min_phase(a)[0] for a, _ in vany[: min(3, len(vany))]]
+        vmp2, vany2, anyc2 = run_attempts(reflect_seeds)
+        vmp += vmp2
+        vmp.sort(key=lambda t: t[1])
+        vany += vany2
+        vany.sort(key=lambda t: t[1])
+        anyc += anyc2
+        anyc.sort(key=lambda t: t[1])
+
+    if vmp:
+        return vmp[0][0], vmp[0][1], True
+    if vany:
+        return vany[0][0], vany[0][1], True
+    if anyc:
+        return anyc[0][0], anyc[0][1], False
     return a0, u0, False
 
 
@@ -324,6 +352,7 @@ def _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs):
         result.u = u_pol
         result.delta1 = float(np.sqrt(max(u_pol, 0.0)) - 1.0)
         result.polish_verified = verified
+        result.min_phase = check_min_phase(a_pol)[0]
     return result
 
 
@@ -335,17 +364,24 @@ def design_filter_full(n: int, J0: Sequence[Interval], J1: Sequence[Interval], m
     T = cheb_to_mono_matrix(n)
     if sigma is not None:
         return _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs)
-    best_verified, best_any = None, None
+    # Prefer verified + already-realizable (min-phase) results over merely
+    # verified ones: a smaller delta1 that turns out unrealizable is not
+    # actually better once you account for what reflecting onto the
+    # realizable branch does to constraint (C) (see inverse.ensure_min_phase
+    # / sdp_design._polish's re-polish-from-reflection step).
+    best_verified_mp, best_verified_any, best_any = None, None, None
     for sig in itertools.product((1, -1), repeat=len(J0)):
         res = _solve_full_for_sigma(n, J0, J1, mu0, sig, T, solver, solver_kwargs)
         if res.status in ("optimal", "optimal_inaccurate"):
-            if res.polish_verified and (best_verified is None or res.u < best_verified.u):
-                best_verified = res
+            if res.polish_verified and res.min_phase and (best_verified_mp is None or res.u < best_verified_mp.u):
+                best_verified_mp = res
+            if res.polish_verified and (best_verified_any is None or res.u < best_verified_any.u):
+                best_verified_any = res
             if best_any is None or res.u < best_any.u:
                 best_any = res
         elif best_any is None:
             best_any = res
-    return best_verified if best_verified is not None else best_any
+    return best_verified_mp or best_verified_any or best_any
 
 
 # --------------------------------------------------------------------------
@@ -354,7 +390,8 @@ def design_filter_full(n: int, J0: Sequence[Interval], J1: Sequence[Interval], m
 
 @dataclass
 class RealizationResult:
-    a: np.ndarray
+    a: np.ndarray               # the REALIZABLE vector actually used below (= info.a_used)
+    a_as_designed: np.ndarray   # the raw input to realize_design, before any reflection
     alphas: np.ndarray
     impedances: np.ndarray
     admissible: bool
@@ -367,6 +404,8 @@ class RealizationResult:
     round_trip_error: float
     TN_stop_max: dict
     TN_pass_min: dict
+    reliable: bool = True   # False => alphas/impedances (hence TN_*) should not be trusted, see .failure
+    failure: str | None = None
 
 
 def realize_design(a_or_c: np.ndarray, J0: Sequence[Interval], J1: Sequence[Interval],
@@ -375,21 +414,30 @@ def realize_design(a_or_c: np.ndarray, J0: Sequence[Interval], J1: Sequence[Inte
                     ) -> RealizationResult:
     """Given a (or c, with from_autocorrelation=True): factor if needed ->
     inverse.alphas_from_a -> forward.a_from_alphas (round-trip check) ->
-    evaluate T_N on I0/I1 for each N in N_values."""
+    evaluate T_N on I0/I1 for each N in N_values.
+
+    IMPORTANT: if the input a is not already minimum-phase,
+    inverse.alphas_from_a reflects it onto the realizable representative
+    (info.a_used) before stripping -- reflection preserves |q~_1| but
+    generally changes kappa_B = Re(q~_1). So (C), T_N, etc. are all
+    evaluated on info.a_used (the vector the returned alphas/impedances
+    actually correspond to, i.e. what could physically be built), *not*
+    on the possibly-unrealizable input -- otherwise the reported
+    performance would describe a filter that can't be built. The input is
+    kept as .a_as_designed for comparison/diagnostics.
+    """
     from .forward import a_from_alphas
 
-    a = fejer_riesz(np.asarray(a_or_c, dtype=float)) if from_autocorrelation else np.asarray(a_or_c, dtype=float)
+    a_designed = fejer_riesz(np.asarray(a_or_c, dtype=float)) if from_autocorrelation else np.asarray(a_or_c, dtype=float)
 
-    alphas, info = alphas_from_a(a)
+    alphas, info = alphas_from_a(a_designed)
+    a = info.a_used  # the realizable vector: everything below is evaluated on THIS
     a_reconstructed = a_from_alphas(alphas)
-    # a_reconstructed should match info.a_used (the min-phase projection of
-    # `a` that was actually stripped) to numerical precision; it only
-    # matches the *original* `a` when `a` was already admissible + min-phase
-    # (info.was_reflected == False).
-    round_trip_error = float(np.max(np.abs(a_reconstructed - info.a_used)))
+    round_trip_error = float(np.max(np.abs(a_reconstructed - a)))
 
-    if sigma is None:
-        sigma = [1 if np.mean(kappa_B(a, np.linspace(al, be, 4000))) > 0 else -1 for al, be in J0]
+    # kappa_B can change sign under reflection, so always redetect sigma on
+    # the realizable a rather than trusting a sigma chosen for a_designed.
+    sigma = [1 if np.mean(kappa_B(a, np.linspace(al, be, 4000))) > 0 else -1 for al, be in J0]
 
     all_ok, mu_min = True, np.inf
     for (alpha, beta), sig in zip(J0, sigma):
@@ -399,7 +447,7 @@ def realize_design(a_or_c: np.ndarray, J0: Sequence[Interval], J1: Sequence[Inte
         else:
             all_ok = False
     achieved_mu = mu_min if (all_ok and J0) else 0.0
-    C_satisfied = all_ok
+    C_satisfied = all_ok and achieved_mu >= mu0 - 1e-9
 
     TN_stop_max, TN_pass_min = {}, {}
     for N in N_values:
@@ -409,13 +457,14 @@ def realize_design(a_or_c: np.ndarray, J0: Sequence[Interval], J1: Sequence[Inte
                                for g, d in J1), default=float("nan"))
 
     return RealizationResult(
-        a=a, alphas=alphas, impedances=info.impedances, admissible=info.admissible,
-        G_min=info.G_min, was_reflected=info.was_reflected,
+        a=a, a_as_designed=a_designed, alphas=alphas, impedances=info.impedances,
+        admissible=info.admissible, G_min=info.G_min, was_reflected=info.was_reflected,
         reconstruction_error=info.reconstruction_error,
         C_satisfied=C_satisfied, achieved_mu=achieved_mu,
         a_reconstructed=a_reconstructed,
         round_trip_error=round_trip_error,
         TN_stop_max=TN_stop_max, TN_pass_min=TN_pass_min,
+        reliable=info.reliable, failure=info.failure,
     )
 
 

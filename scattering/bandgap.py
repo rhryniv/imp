@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .transmission import kappa_B
+from .forward import kappa_B
 
 
 @dataclass
