@@ -1,24 +1,32 @@
-"""Band-informed design demo (per discussion): rather than picking I0/I1
-arbitrarily, derive them from a simple structure's own band/gap structure,
-so they are guaranteed well-posed, then show how much a richer optimized
-block improves on the simple structure at matched N.
+"""Band-informed design demo (v2 -- corrected framing).
 
   1. Simple 1-layer structure, contrast p_1 > 1: alphas = [log p_1, -log p_1].
-  2. Its Floquet discriminant kappa_B has exactly one gap and one band over
+     Its Floquet discriminant kappa_B has exactly one gap and one band over
      the fundamental domain theta in [0, pi] (Fig. 2 of the paper).
-  3. Take I0 strictly inside the gap, I1 strictly inside the band (with a
-     margin, since band edges are singular for the admissibility bound).
-  4. For several n > 1, run the SDP synthesis targeting I0/I1, realize the
-     resulting layer sequence, and compare T_N against the simple
-     structure's T_N at the same N.
+  2. Target a *sub-window* of that gap/band, not the whole thing. A degree-n
+     design has on the order of n natural oscillations of kappa_B across
+     [0, pi] (confirmed empirically: random n=7 structures have a *median*
+     of 14 bands+gaps total); demanding good behavior across almost the
+     entire gap/band forces an atypical, near-global single-band/single-gap
+     topology that becomes vanishingly rare as n grows -- pure random search
+     found 0/20000 feasible n=7 points against the full-width targets used
+     in the first version of this demo. A moderate sub-window sidesteps
+     that entirely, and is also the physically sensible way to spend extra
+     layers: sharpen performance over the region you actually care about,
+     rather than fight the polynomial's natural oscillation count.
+  3. For several n > 1, solve directly for a realizable layer sequence via
+     sdp_design.design_via_layers (the gamma_j = tanh(alpha_j)
+     reparametrization -- every returned design is physically buildable by
+     construction, no reflection step, no risk of losing constraint (C) to
+     it), and compare T_N against the baseline at matched N.
 
 Run from the repository root: python3 examples/band_informed_demo.py
 """
 import numpy as np
 
-from scattering.forward import a_from_alphas, kappa_B, transmission_TN, plot_filter
-from scattering.bandgap import find_bands_gaps, shrink_interval
-from scattering.sdp_design import design_filter_full, realize_design
+from scattering.forward import a_from_alphas, transmission_TN, plot_filter
+from scattering.bandgap import find_bands_gaps
+from scattering.sdp_design import design_via_layers
 
 
 def main():
@@ -29,81 +37,63 @@ def main():
     a_simple = a_from_alphas(alphas_simple)
     print(f"Baseline: 1-layer block, p_1={p1_contrast} (alphas={np.round(alphas_simple, 4)})")
 
-    # --- Steps 2-3: band/gap structure, choose I0/I1 with a margin ---
     bg = find_bands_gaps(a_simple)
-    print(f"  bands = {[tuple(round(x, 4) for x in b) for b in bg.bands]}")
-    print(f"  gaps  = {[tuple(round(x, 4) for x in g) for g in bg.gaps]}")
-
     gap_lo, gap_hi, gap_sign = bg.gaps[0]
-    band = bg.bands[0]
-    margin = 0.15
-    I0 = [shrink_interval((gap_lo, gap_hi), margin)]
-    I1 = [shrink_interval(band, margin)]
-    print(f"  I0 (stop, margin={margin}) = {[tuple(round(x, 4) for x in iv) for iv in I0]}")
-    print(f"  I1 (pass, margin={margin}) = {[tuple(round(x, 4) for x in iv) for iv in I1]}")
+    band_lo, band_hi = bg.bands[0]
+    print(f"  full gap  = [{gap_lo:.4f}, {gap_hi:.4f}]  (width {gap_hi - gap_lo:.4f})")
+    print(f"  full band = [{band_lo:.4f}, {band_hi:.4f}]  (width {band_hi - band_lo:.4f})")
 
-    # mu0 barely matters: stop-band attenuation is <= 4*exp(-2*N*mu)
-    # (Prop. 5.4a), so *any* mu0 > 0 is eventually reached by taking N
-    # large enough -- the only role of (C) in the single-block SDP is to
-    # certify I0 sits in a genuine gap at all, not to hit a specific
-    # depth. Aiming for a large mu0 needlessly squeezes (C) against (B)
-    # and is exactly what caused the good-ripple-vs-realizable tension in
-    # the previous run. Use a small, easy target instead, and let N do
-    # the work of reaching the actual attenuation target afterwards.
-    th0 = np.linspace(*I0[0], 4000)
-    th1 = np.linspace(*I1[0], 4000)
-    mu0_available = np.arccosh(np.min(gap_sign * kappa_B(a_simple, th0)))
+    # --- Step 2: a moderate sub-window of each, not the whole gap/band ---
+    I0 = [(gap_lo + 0.70 * (gap_hi - gap_lo), gap_lo + 0.85 * (gap_hi - gap_lo))]
+    I1 = [(band_lo + 0.40 * (band_hi - band_lo), band_lo + 0.60 * (band_hi - band_lo))]
+    print(f"  I0 (stop) = {I0}  (width {I0[0][1] - I0[0][0]:.4f})")
+    print(f"  I1 (pass) = {I1}  (width {I1[0][1] - I1[0][0]:.4f})")
+
+    # mu0 barely matters (Prop. 5.4a: any mu0>0 is reached for large enough
+    # N), so a small, easy target is used; N does the work of reaching a
+    # given attenuation level afterwards (Step 4 of the synthesis algorithm).
     mu0 = 0.05
-    print(f"  baseline's own gap depth on I0: mu={mu0_available:.4f}; "
-          f"target mu0={mu0:.4f} (just needs to be > 0 -- N handles the rest)\n")
-
     N_values = (5, 10, 20)
 
-    print("--- Baseline (n=1) T_N ---")
+    th0 = np.linspace(*I0[0], 4000)
+    th1 = np.linspace(*I1[0], 4000)
+    print("\n--- Baseline (n=1) T_N ---")
     baseline_stop = {N: float(transmission_TN(a_simple, th0, N).max()) for N in N_values}
     baseline_pass = {N: float(transmission_TN(a_simple, th1, N).min()) for N in N_values}
     for N in N_values:
         print(f"  N={N:3d}:  max T_N on I0 = {baseline_stop[N]:.3e}   "
               f"min T_N on I1 = {baseline_pass[N]:.5f}")
 
-    # --- Step 4/5: optimize for several n > 1, compare ---
-    print("\n--- Optimized designs ---")
+    # --- Step 3: design_via_layers for several n, compare ---
+    print("\n--- Optimized designs (design_via_layers: realizable by construction) ---")
     results = {}
     for n in (3, 5, 7, 9):
-        res = design_filter_full(n, I0, I1, mu0)
-        if res is None or res.a is None or res.status not in ("optimal", "optimal_inaccurate"):
-            print(f"n={n}: SDP did not return a usable result (status={getattr(res, 'status', None)})")
+        res = design_via_layers(n, I0, I1, mu0, use_sdp_warm_start=False, n_restarts=15)
+        if res.status != "optimal":
+            print(f"\nn={n}: {res.status}")
             continue
-        real = realize_design(res.a, I0, I1, mu0, sigma=res.sigma, N_values=N_values)
-        results[n] = (res, real)
+        results[n] = res
 
-        print(f"\nn={n}: delta1={res.delta1:.4e}  tightness_ratio={res.tightness_ratio:.2e}  "
-              f"polish_verified={res.polish_verified}")
-        if not real.reliable:
-            print(f"  *** layer realization UNRELIABLE: {real.failure}")
-        print(f"  realized: admissible={real.admissible} (G_min={real.G_min:.6f})  "
-              f"C_satisfied={real.C_satisfied} (achieved_mu={real.achieved_mu:.4f}, target={mu0:.4f})  "
-              f"was_reflected={real.was_reflected}  round_trip_err={real.round_trip_error:.2e}")
-        print(f"  alphas = {np.round(real.alphas, 4)}  (sum={np.sum(real.alphas):.2e})")
-        print(f"  impedances p_0..p_{n+1} = {np.round(real.impedances, 4)}")
+        print(f"\nn={n}: delta1={res.delta1:.4e}  sigma={res.sigma}  "
+              f"achieved_mu={res.achieved_mu:.4f} (target {mu0})")
+        print(f"  alphas = {np.round(res.alphas, 4)}  (sum={np.sum(res.alphas):.2e})")
+        print(f"  impedances p_0..p_{n + 1} = {np.round(res.impedances, 4)}")
         for N in N_values:
-            print(f"  N={N:3d}:  max T_N on I0 = {real.TN_stop_max[N]:.3e}  "
-                  f"(baseline {baseline_stop[N]:.3e})   "
-                  f"min T_N on I1 = {real.TN_pass_min[N]:.5f}  "
-                  f"(baseline {baseline_pass[N]:.5f})")
+            tn_stop = float(transmission_TN(res.a, th0, N).max())
+            tn_pass = float(transmission_TN(res.a, th1, N).min())
+            print(f"  N={N:3d}:  max T_N on I0 = {tn_stop:.3e}  (baseline {baseline_stop[N]:.3e})   "
+                  f"min T_N on I1 = {tn_pass:.5f}  (baseline {baseline_pass[N]:.5f})")
 
-    # --- Plot the best verified, largest-n design against the baseline ---
-    verified_ns = [n for n, (res, real) in results.items()
-                   if res.polish_verified and real.C_satisfied and real.reliable]
-    if verified_ns:
-        n_best = max(verified_ns)
-        _, real_best = results[n_best]
+    # --- Plot the largest-n design against the baseline ---
+    if results:
+        n_best = max(results)
+        res_best = results[n_best]
         print(f"\nPlotting baseline (n=1) vs optimized (n={n_best}) ...")
         plot_filter(a_simple, N_values, I0=I0, I1=I1, savepath="baseline_n1.png")
-        plot_filter(real_best.a, N_values, I0=I0, I1=I1, savepath=f"optimized_n{n_best}.png")
-        print("  saved baseline_n1.png, optimized_n{}.png".format(n_best))
+        plot_filter(res_best.a, N_values, I0=I0, I1=I1, savepath=f"optimized_n{n_best}.png")
+        print(f"  saved baseline_n1.png, optimized_n{n_best}.png")
     else:
-        print("\nNo verified+C-satisfied design found across the n values tried; skipping plots.")
+        print("\nNo design succeeded across the n values tried; skipping plots.")
 
 
 if __name__ == "__main__":
