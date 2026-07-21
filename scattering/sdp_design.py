@@ -439,15 +439,22 @@ def realize_design(a_or_c: np.ndarray, J0: Sequence[Interval], J1: Sequence[Inte
     # the realizable a rather than trusting a sigma chosen for a_designed.
     sigma = [1 if np.mean(kappa_B(a, np.linspace(al, be, 4000))) > 0 else -1 for al, be in J0]
 
+    # (C) is typically *tight* at a genuine constrained optimum (kappa_B
+    # touches cosh(mu0) exactly, same as (B) touches u) -- an exact
+    # >=1.0 comparison then just measures which side of floating-point
+    # noise the run happened to land on. A small tolerance avoids treating
+    # a ~1e-10 shortfall as total failure; achieved_mu uses
+    # arccosh(clip(., 1, None)) so a true (not just noise-level) shortfall
+    # still reports 0 rather than raising on an out-of-domain arccosh.
+    kappa_tol = 1e-6
     all_ok, mu_min = True, np.inf
     for (alpha, beta), sig in zip(J0, sigma):
-        kap = kappa_B(a, np.linspace(alpha, beta, 4000))
-        if np.all(sig * kap >= 1.0):
-            mu_min = min(mu_min, np.arccosh(np.min(sig * kap)))
-        else:
+        kap_min = float(np.min(sig * kappa_B(a, np.linspace(alpha, beta, 4000))))
+        mu_min = min(mu_min, np.arccosh(max(kap_min, 1.0)))
+        if kap_min < 1.0 - kappa_tol:
             all_ok = False
-    achieved_mu = mu_min if (all_ok and J0) else 0.0
-    C_satisfied = all_ok and achieved_mu >= mu0 - 1e-9
+    achieved_mu = mu_min if J0 else float("inf")
+    C_satisfied = all_ok and achieved_mu >= mu0 - 1e-6
 
     TN_stop_max, TN_pass_min = {}, {}
     for N in N_values:

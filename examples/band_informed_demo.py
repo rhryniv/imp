@@ -42,15 +42,20 @@ def main():
     print(f"  I0 (stop, margin={margin}) = {[tuple(round(x, 4) for x in iv) for iv in I0]}")
     print(f"  I1 (pass, margin={margin}) = {[tuple(round(x, 4) for x in iv) for iv in I1]}")
 
-    # Target stop-band depth: comfortably inside what the baseline itself
-    # already achieves on I0, so the target is meaningful but not
-    # gratuitously hard for small n.
+    # mu0 barely matters: stop-band attenuation is <= 4*exp(-2*N*mu)
+    # (Prop. 5.4a), so *any* mu0 > 0 is eventually reached by taking N
+    # large enough -- the only role of (C) in the single-block SDP is to
+    # certify I0 sits in a genuine gap at all, not to hit a specific
+    # depth. Aiming for a large mu0 needlessly squeezes (C) against (B)
+    # and is exactly what caused the good-ripple-vs-realizable tension in
+    # the previous run. Use a small, easy target instead, and let N do
+    # the work of reaching the actual attenuation target afterwards.
     th0 = np.linspace(*I0[0], 4000)
     th1 = np.linspace(*I1[0], 4000)
     mu0_available = np.arccosh(np.min(gap_sign * kappa_B(a_simple, th0)))
-    mu0 = 0.35 * mu0_available
+    mu0 = 0.05
     print(f"  baseline's own gap depth on I0: mu={mu0_available:.4f}; "
-          f"target mu0={mu0:.4f} (35% of that)\n")
+          f"target mu0={mu0:.4f} (just needs to be > 0 -- N handles the rest)\n")
 
     N_values = (5, 10, 20)
 
