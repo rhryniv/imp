@@ -385,6 +385,188 @@ def design_filter_full(n: int, J0: Sequence[Interval], J1: Sequence[Interval], m
 
 
 # --------------------------------------------------------------------------
+# design_via_layers: optimize directly over the physical Schur parameters
+# --------------------------------------------------------------------------
+#
+# design_filter_full optimizes over a directly, then _polish tries to reach
+# a feasible point, then (in realize_design) that point gets reflected onto
+# the realizable branch if it wasn't already one -- and reflection changes
+# kappa_B, generally breaking constraint (C). Every remaining failure mode
+# found in this project traces back to that same gap between "satisfies the
+# design constraints" and "is a physically buildable filter."
+#
+# forward.forward_reconstruct closes that gap by construction: for *any*
+# real alpha_0,...,alpha_n, it produces a q~_1 that is automatically
+# admissible (constraint A, the SU(1,1) identity |p1|^2-|p2|^2=1 holds
+# identically) and automatically realizable (Prop. 4.4's zero-free property
+# falls out of the recursion itself). So optimizing directly over
+# gamma_j = tanh(alpha_j) in (-1,1) -- rather than over a -- never needs
+# reflection, never loses constraint (C) to it, and constraint (A) doesn't
+# need to be imposed at all (it's automatic). Only (B) and (C) remain as
+# actual constraints; (D) (sum(alphas)=0) is eliminated by solving for
+# alpha_n as a function of the other n alphas (_free_to_alphas), which also
+# removes an equality constraint that made early attempts at this approach
+# converge badly.
+#
+# The tradeoff: this landscape is genuinely harder for a local solver than
+# optimizing a directly (design_filter_full has an SDP relaxation to warm
+# start from; this doesn't, and a naive random start is usually infeasible
+# everywhere). design_via_layers compensates by warm-starting from
+# design_filter_full's own (possibly unrealizable) result -- reflected onto
+# the realizable branch first -- in addition to a user-supplied warm start
+# and the trivial all-zero one, then multi-restarts with small perturbations
+# around whichever seeds are available.
+
+def _free_to_alphas(gamma_free: np.ndarray) -> np.ndarray:
+    """gamma_free = (gamma_0,...,gamma_{n-1}) are free in (-1,1); alpha_n is
+    *solved for* so that sum(alphas)=0 (constraint D) holds automatically,
+    removing it as an explicit equality constraint."""
+    alphas_free = np.arctanh(gamma_free)
+    alpha_n = -np.sum(alphas_free)
+    return np.concatenate([alphas_free, [alpha_n]])
+
+
+@dataclass
+class LayerDesignResult:
+    n: int
+    mu0: float
+    status: str
+    sigma: tuple | None = None
+    alphas: np.ndarray | None = None
+    a: np.ndarray | None = None            # = forward.a_from_alphas(alphas): realizable by construction
+    impedances: np.ndarray | None = None
+    u: float | None = None
+    delta1: float | None = None
+    verified: bool | None = None           # True iff (B)/(C) hold pointwise on a fine grid
+    achieved_mu: float = 0.0
+
+
+def _solve_layers_for_sigma(n, J0, J1, mu0, sigma, gamma_bound, n_grid_B, n_grid_C, seeds, maxiter=400):
+    from .forward import a_from_alphas
+
+    theta_B = [np.linspace(g, d, n_grid_B) for g, d in J1]
+    theta_C = [np.linspace(al, be, n_grid_C) for al, be in J0]
+    coshmu0 = np.cosh(mu0)
+
+    def a_of(gamma_free):
+        return a_from_alphas(_free_to_alphas(gamma_free))
+
+    def objective(x):
+        return x[-1]
+
+    def objective_grad(x):
+        g = np.zeros(len(x))
+        g[-1] = 1.0
+        return g
+
+    constraints = []
+    for th in theta_B:
+        def fun(x, th=th):
+            return x[-1] - q1_abs_sq(a_of(x[:-1]), th)
+        constraints.append({"type": "ineq", "fun": fun})
+    for th, sig in zip(theta_C, sigma):
+        def fun(x, th=th, sig=sig):
+            return sig * kappa_B(a_of(x[:-1]), th) - coshmu0
+        constraints.append({"type": "ineq", "fun": fun})
+
+    bounds = [(-gamma_bound, gamma_bound)] * n + [(1.0, None)]
+
+    def verify(gamma_free, u, tol=1e-6):
+        a = a_of(gamma_free)
+        for th in theta_B:
+            if np.max(q1_abs_sq(a, th)) > u + tol:
+                return False
+        for th, sig in zip(theta_C, sigma):
+            if np.min(sig * kappa_B(a, th)) < coshmu0 - tol:
+                return False
+        return True
+
+    best = None
+    for gamma0 in seeds:
+        gamma0 = np.clip(gamma0, -gamma_bound, gamma_bound)
+        Gmax = max((np.max(q1_abs_sq(a_of(gamma0), th)) for th in theta_B), default=1.0)
+        u0 = max(1.0 + 1e-9, Gmax)
+        x0 = np.concatenate([gamma0, [u0]])
+        res = minimize(objective, x0, jac=objective_grad, constraints=constraints, bounds=bounds,
+                        method="SLSQP", options={"maxiter": maxiter, "ftol": 1e-14})
+        if not np.all(np.isfinite(res.x)):
+            continue
+        gamma_try, u_try = res.x[:-1], float(res.x[-1])
+        # SLSQP's own exit status is not trustworthy here either (same
+        # lesson as _polish): verify directly instead of trusting res.status.
+        if verify(gamma_try, u_try) and (best is None or u_try < best[1]):
+            best = (gamma_try, u_try)
+
+    if best is None:
+        return None
+    gamma_free, u = best
+    return _free_to_alphas(gamma_free), a_of(gamma_free), u
+
+
+def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
+                       sigma: tuple | None = None, warm_start_alphas: np.ndarray | None = None,
+                       use_sdp_warm_start: bool = True, gamma_bound: float = 0.9995,
+                       n_grid_B: int = 400, n_grid_C: int = 400, n_restarts: int = 8,
+                       seed: int = 0, solver: str = "CLARABEL") -> LayerDesignResult:
+    """Directly optimize over realizable layer sequences (see the section
+    docstring above). Tries all 2^len(J0) sign patterns if sigma is None.
+
+    Every returned design is realizable by construction; .verified means
+    (B) and (C) additionally hold on a fine grid (there is no
+    admissible-but-infeasible middle case to report, unlike design_filter_full).
+    """
+    rng = np.random.default_rng(seed)
+
+    base_seeds = []
+    if warm_start_alphas is not None:
+        base_seeds.append(np.tanh(np.asarray(warm_start_alphas, dtype=float)[:n]))
+    if use_sdp_warm_start:
+        try:
+            full_res = design_filter_full(n, J0, J1, mu0, sigma=sigma, solver=solver)
+            if full_res is not None and full_res.a is not None:
+                a_mp, _ = ensure_min_phase(full_res.a)
+                alphas_ws, info = alphas_from_a(a_mp)
+                if info.reliable and not np.any(np.isnan(alphas_ws)):
+                    base_seeds.append(np.tanh(alphas_ws[:n]))
+        except Exception:
+            pass
+    if not base_seeds:
+        base_seeds.append(np.zeros(n))
+
+    sigmas = [sigma] if sigma is not None else list(itertools.product((1, -1), repeat=len(J0)))
+    best_overall = None
+    for sig in sigmas:
+        seeds = list(base_seeds)
+        primary = base_seeds[0]
+        seeds += [np.clip(primary + 0.05 * rng.standard_normal(n), -gamma_bound, gamma_bound)
+                  for _ in range(n_restarts)]
+        result = _solve_layers_for_sigma(n, J0, J1, mu0, sig, gamma_bound, n_grid_B, n_grid_C, seeds)
+        if result is not None:
+            alphas, a, u = result
+            delta1 = float(np.sqrt(max(u, 0.0)) - 1.0)
+            if best_overall is None or delta1 < best_overall[0]:
+                best_overall = (delta1, sig, alphas, a, u)
+
+    if best_overall is None:
+        return LayerDesignResult(n=n, mu0=mu0, status="infeasible")
+
+    delta1, sig, alphas, a, u = best_overall
+    impedances = np.empty(n + 2)
+    impedances[0] = 1.0
+    for j, alpha_j in enumerate(alphas):
+        impedances[j + 1] = impedances[j] * np.exp(alpha_j)
+
+    mu_min = np.inf
+    for (al, be), s in zip(J0, sig):
+        kap = s * kappa_B(a, np.linspace(al, be, 4000))
+        mu_min = min(mu_min, np.arccosh(max(float(np.min(kap)), 1.0)))
+
+    return LayerDesignResult(n=n, mu0=mu0, status="optimal", sigma=sig, alphas=alphas, a=a,
+                              impedances=impedances, u=u, delta1=delta1, verified=True,
+                              achieved_mu=mu_min if J0 else float("inf"))
+
+
+# --------------------------------------------------------------------------
 # realize_design / degree_scan / full_pipeline
 # --------------------------------------------------------------------------
 
