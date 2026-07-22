@@ -416,6 +416,23 @@ def design_filter_full(n: int, J0: Sequence[Interval], J1: Sequence[Interval], m
 # the realizable branch first -- in addition to a user-supplied warm start
 # and the trivial all-zero one, then multi-restarts with small perturbations
 # around whichever seeds are available.
+#
+# A related, separate axis: alpha_j=0 is an ordinary *interior* value of
+# each gamma_j, not a missing layer -- that lattice cell still applies its
+# own transit phase (see forward.py), it just has no impedance jump. So an
+# already-verified n_small-layer solution is not literally a special case
+# of an n-layer one with trailing zeros appended (the extra spacer cells
+# add phase, which generally changes kappa_B), but *embedding* it that way
+# is still a genuinely different, often better, n-layer design: the same
+# cluster of real impedance jumps, now with tunable spacing -- trailing
+# zeros widen the gap before the next repeated block, interior zeros widen
+# a layer inside the structure. Nothing prevents the local optimizer from
+# finding such a point on its own, but a naive random restart essentially
+# never lands near an exact- or near-zero gamma_j by chance. The
+# smaller_solutions argument below seeds a handful of restarts with exactly
+# these padded embeddings (trailing, leading, split-down-the-middle, and a
+# few random insertion points), so the search actually explores that part
+# of the space instead of relying on chance.
 
 def _free_to_alphas(gamma_free: np.ndarray) -> np.ndarray:
     """gamma_free = (gamma_0,...,gamma_{n-1}) are free in (-1,1); alpha_n is
@@ -424,6 +441,31 @@ def _free_to_alphas(gamma_free: np.ndarray) -> np.ndarray:
     alphas_free = np.arctanh(gamma_free)
     alpha_n = -np.sum(alphas_free)
     return np.concatenate([alphas_free, [alpha_n]])
+
+
+def _padded_alpha_seeds(alphas_small: np.ndarray, n_target: int, rng: np.random.Generator,
+                         max_variants: int = 4) -> list[np.ndarray]:
+    """Embed a smaller, already-verified n_small-layer solution into an
+    n_target-slot layer sequence by inserting (n_target - n_small) zero-alpha
+    spacer layers. Trailing insertion widens the spacing before the next
+    repeated block; interior insertion widens a layer inside the structure
+    (see the section docstring above). These are only *seeds* for the local
+    optimizer -- padding does not preserve kappa_B exactly -- not
+    guaranteed-feasible points on their own."""
+    n_small = len(alphas_small) - 1
+    m = n_target - n_small
+    if m <= 0:
+        return [alphas_small[: n_target + 1]]
+    mid = (n_small + 1) // 2
+    variants = [
+        np.concatenate([alphas_small, np.zeros(m)]),                              # trailing
+        np.concatenate([np.zeros(m), alphas_small]),                              # leading
+        np.concatenate([alphas_small[:mid], np.zeros(m), alphas_small[mid:]]),    # split down the middle
+    ]
+    for _ in range(max(0, max_variants - len(variants))):
+        pos = int(rng.integers(0, n_small + 2))
+        variants.append(np.concatenate([alphas_small[:pos], np.zeros(m), alphas_small[pos:]]))
+    return variants
 
 
 @dataclass
@@ -505,11 +547,20 @@ def _solve_layers_for_sigma(n, J0, J1, mu0, sigma, gamma_bound, n_grid_B, n_grid
 
 def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
                        sigma: tuple | None = None, warm_start_alphas: np.ndarray | None = None,
-                       use_sdp_warm_start: bool = True, gamma_bound: float = 0.9995,
+                       use_sdp_warm_start: bool = True,
+                       smaller_solutions: dict[int, np.ndarray] | None = None,
+                       n_pad_variants: int = 4, gamma_bound: float = 0.9995,
                        n_grid_B: int = 400, n_grid_C: int = 400, n_restarts: int = 8,
                        seed: int = 0, solver: str = "CLARABEL") -> LayerDesignResult:
     """Directly optimize over realizable layer sequences (see the section
     docstring above). Tries all 2^len(J0) sign patterns if sigma is None.
+
+    smaller_solutions: optional {n_small: alphas} of already-verified
+    solutions at smaller n_small < n. Each is embedded into n slots by
+    zero-padding (trailing/leading/interior, see _padded_alpha_seeds) and
+    added as extra warm-start seeds -- lets the search actually reach the
+    "same core structure, wider spacing" designs that a naive random
+    restart essentially never finds on its own.
 
     Every returned design is realizable by construction; .verified means
     (B) and (C) additionally hold on a fine grid (there is no
@@ -530,6 +581,13 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
                     base_seeds.append(np.tanh(alphas_ws[:n]))
         except Exception:
             pass
+    if smaller_solutions:
+        for n_small, alphas_small in smaller_solutions.items():
+            if n_small >= n:
+                continue
+            alphas_small = np.asarray(alphas_small, dtype=float)
+            for padded in _padded_alpha_seeds(alphas_small, n, rng, max_variants=n_pad_variants):
+                base_seeds.append(np.tanh(padded[:n]))
     if not base_seeds:
         base_seeds.append(np.zeros(n))
 
@@ -537,9 +595,10 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
     best_overall = None
     for sig in sigmas:
         seeds = list(base_seeds)
-        primary = base_seeds[0]
-        seeds += [np.clip(primary + 0.05 * rng.standard_normal(n), -gamma_bound, gamma_bound)
-                  for _ in range(n_restarts)]
+        n_per_seed = max(1, n_restarts // len(base_seeds))
+        for bs in base_seeds:
+            seeds += [np.clip(bs + 0.05 * rng.standard_normal(n), -gamma_bound, gamma_bound)
+                      for _ in range(n_per_seed)]
         result = _solve_layers_for_sigma(n, J0, J1, mu0, sig, gamma_bound, n_grid_B, n_grid_C, seeds)
         if result is not None:
             alphas, a, u = result

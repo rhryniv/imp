@@ -67,12 +67,15 @@ def main():
 
     print("\n--- Optimized designs (design_via_layers: realizable by construction) ---")
     results = {}
+    smaller_solutions = {}
     for n in (3, 5, 7, 9):
-        res = design_via_layers(n, I0_opt, I1_opt, mu0, use_sdp_warm_start=False, n_restarts=15)
+        res = design_via_layers(n, I0_opt, I1_opt, mu0, use_sdp_warm_start=False, n_restarts=15,
+                                 smaller_solutions=smaller_solutions)
         if res.status != "optimal":
             print(f"\nn={n}: {res.status}")
             continue
         results[n] = res
+        smaller_solutions[n] = res.alphas
 
         print(f"\nn={n}: delta1={res.delta1:.4e}  sigma={res.sigma}  "
               f"achieved_mu={res.achieved_mu:.4f} (target {mu0})")
