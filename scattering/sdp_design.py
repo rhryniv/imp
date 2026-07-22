@@ -66,6 +66,39 @@ def theta_interval_to_x(gamma: float, delta: float) -> Interval:
     return float(np.cos(delta)), float(np.cos(gamma))
 
 
+def widen_intervals(intervals: Sequence[Interval], margin: float,
+                     domain: Interval = (0.0, np.pi)) -> list[Interval]:
+    """Expand each (lo, hi) interval by `margin` on both sides (clipped to
+    domain). Intended as a guard band: impose constraints (B)/(C) on a
+    region slightly wider than the true target, then evaluate/report
+    performance only on the original, narrower interval. The worst-case
+    point of a constrained trig polynomial over a prescribed interval tends
+    to sit at or very near that interval's own edge (confirmed empirically
+    -- see examples/multiband_demo.py), since nothing outside the
+    prescribed interval controls the transition into it; solving on a wider
+    region pushes that edge roughness away from the region actually being
+    reported on."""
+    lo_bound, hi_bound = domain
+    widened = []
+    for lo, hi in intervals:
+        new_lo = max(lo_bound, lo - margin)
+        new_hi = min(hi_bound, hi + margin)
+        if new_hi <= new_lo:
+            raise ValueError(f"margin {margin} too large for interval ({lo}, {hi})")
+        widened.append((new_lo, new_hi))
+    return widened
+
+
+def assert_disjoint_intervals(intervals: Sequence[Interval]) -> None:
+    """Raise if any two intervals in the combined list overlap -- meant to
+    guard against widen_intervals' margin eating into a neighbouring band
+    (e.g. I0's guard band creeping into I1's)."""
+    ordered = sorted(intervals)
+    for (lo1, hi1), (lo2, hi2) in zip(ordered, ordered[1:]):
+        if hi1 > lo2:
+            raise ValueError(f"intervals overlap: ({lo1}, {hi1}) and ({lo2}, {hi2}) -- reduce margin")
+
+
 # --------------------------------------------------------------------------
 # design_filter: autocorrelation-domain SDP, (A)+(B)+(D) only
 # --------------------------------------------------------------------------

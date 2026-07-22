@@ -21,7 +21,7 @@ Run from the repository root: python3 examples/multiband_demo.py
 import numpy as np
 
 from scattering.forward import transmission_TN, plot_filter
-from scattering.sdp_design import design_via_layers
+from scattering.sdp_design import design_via_layers, widen_intervals, assert_disjoint_intervals
 
 
 def _extreme_TN(a, intervals, N, mode, n_grid=2000):
@@ -40,6 +40,22 @@ def main():
     print(f"I0 (stop) = {I0}")
     print(f"I1 (pass) = {I1}")
 
+    # Guard band: the worst-case point of a constrained design tends to sit
+    # right at the edge of its prescribed interval (confirmed empirically --
+    # for the n=7 design here, every worst point was within 0.05 of an
+    # interval boundary, several essentially exactly on it). So constrain
+    # (B)/(C) on a slightly *wider* region than the true target, but keep
+    # reporting/evaluating T_N only on the original I0/I1 -- the true edges
+    # then sit safely in the interior of the solved region instead of
+    # coinciding with the optimizer's own constraint boundary.
+    margin = 0.08
+    I0_solve = widen_intervals(I0, margin)
+    I1_solve = widen_intervals(I1, margin)
+    assert_disjoint_intervals(I0_solve + I1_solve)
+    print(f"Solving with a guard band of {margin} on each side:")
+    print(f"  I0_solve = {I0_solve}")
+    print(f"  I1_solve = {I1_solve}")
+
     mu0 = 0.05  # any mu0>0 works (Prop. 5.4a); N does the work of reaching a given depth
     N_values = (1, 3, 5)
 
@@ -47,7 +63,7 @@ def main():
     results = {}
     smaller_solutions = {}
     for n in (1, 3, 5, 7, 9):
-        res = design_via_layers(n, I0, I1, mu0, use_sdp_warm_start=False, n_restarts=15,
+        res = design_via_layers(n, I0_solve, I1_solve, mu0, use_sdp_warm_start=False, n_restarts=15,
                                  smaller_solutions=smaller_solutions)
         if res.status != "optimal":
             print(f"\nn={n}: {res.status} (too few layers for this many disjoint bands, most likely)")
@@ -56,11 +72,11 @@ def main():
         smaller_solutions[n] = res.alphas
 
         print(f"\nn={n}: delta1={res.delta1:.4e}  sigma={res.sigma}  "
-              f"achieved_mu={res.achieved_mu:.4f} (target {mu0})")
+              f"achieved_mu={res.achieved_mu:.4f} (target {mu0}, over the WIDER I0_solve)")
         print(f"  alphas = {np.round(res.alphas, 4)}  (sum={np.sum(res.alphas):.2e})")
         print(f"  impedances p_0..p_{n + 1} = {np.round(res.impedances, 4)}")
         for N in N_values:
-            tn_stop = _extreme_TN(res.a, I0, N, "max")
+            tn_stop = _extreme_TN(res.a, I0, N, "max")   # reported on the TRUE, narrower I0/I1
             tn_pass = _extreme_TN(res.a, I1, N, "min")
             print(f"  N={N:3d}:  max T_N over I0 = {tn_stop:.3e}   min T_N over I1 = {tn_pass:.5f}")
 
