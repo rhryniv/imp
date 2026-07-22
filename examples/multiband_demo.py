@@ -61,11 +61,15 @@ def main():
             tn_pass = _extreme_TN(res.a, I1, N, "min")
             print(f"  N={N:3d}:  max T_N over I0 = {tn_stop:.3e}   min T_N over I1 = {tn_pass:.5f}")
 
-    # --- Plot the largest-n design ---
+    # --- Plot the best-performing design (smallest delta1), not just the
+    # largest n that happened to converge: local search quality is not
+    # guaranteed monotonic in n (confirmed in this exact run -- n=9 landed
+    # in a worse basin than n=7), so "largest n" and "best design" can
+    # differ, and silently plotting the former would be misleading.
     if results:
-        n_best = max(results)
+        n_best = min(results, key=lambda n: results[n].delta1)
         res_best = results[n_best]
-        print(f"\nPlotting optimized design at n={n_best} ...")
+        print(f"\nPlotting best-performing design (n={n_best}, delta1={res_best.delta1:.4e}) ...")
         plot_filter(res_best.a, N_values, I0=I0, I1=I1, savepath=f"multiband_n{n_best}.png")
         print(f"  saved multiband_n{n_best}.png")
     else:
