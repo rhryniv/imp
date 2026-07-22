@@ -40,21 +40,21 @@ def main():
     print(f"I0 (stop) = {I0}")
     print(f"I1 (pass) = {I1}")
 
-    # Guard band: the worst-case point of a constrained design tends to sit
-    # right at the edge of its prescribed interval (confirmed empirically --
-    # for the n=7 design here, every worst point was within 0.05 of an
-    # interval boundary, several essentially exactly on it). So constrain
-    # (B)/(C) on a slightly *wider* region than the true target, but keep
-    # reporting/evaluating T_N only on the original I0/I1 -- the true edges
-    # then sit safely in the interior of the solved region instead of
-    # coinciding with the optimizer's own constraint boundary.
-    margin = 0.08
-    I0_solve = widen_intervals(I0, margin)
-    I1_solve = widen_intervals(I1, margin)
+    # Guard band (widen_intervals/assert_disjoint_intervals below): tried
+    # here at several margins from 0.01 to 0.08. The worst-case point does
+    # sit right at the prescribed interval's edge, as hypothesized, but
+    # widening the *constrained* region doesn't fix that -- it just makes
+    # the whole problem harder for a fixed n, and true-I0/I1 performance
+    # got monotonically *worse* with every margin tried, not better (e.g.
+    # n=7's min T_N on I1 dropped from 0.69 at margin=0 to 0.33 at
+    # margin=0.03). So the guard band is left off (margin=0) here --
+    # solving on the true, narrow intervals directly is the better
+    # tradeoff in this problem, even though the edge-sensitivity itself is
+    # real. Set margin > 0 below to reproduce the (negative) experiment.
+    margin = 0.0
+    I0_solve = widen_intervals(I0, margin) if margin > 0 else I0
+    I1_solve = widen_intervals(I1, margin) if margin > 0 else I1
     assert_disjoint_intervals(I0_solve + I1_solve)
-    print(f"Solving with a guard band of {margin} on each side:")
-    print(f"  I0_solve = {I0_solve}")
-    print(f"  I1_solve = {I1_solve}")
 
     mu0 = 0.05  # any mu0>0 works (Prop. 5.4a); N does the work of reaching a given depth
     N_values = (1, 3, 5)
@@ -72,7 +72,7 @@ def main():
         smaller_solutions[n] = res.alphas
 
         print(f"\nn={n}: delta1={res.delta1:.4e}  sigma={res.sigma}  "
-              f"achieved_mu={res.achieved_mu:.4f} (target {mu0}, over the WIDER I0_solve)")
+              f"achieved_mu={res.achieved_mu:.4f} (target {mu0})")
         print(f"  alphas = {np.round(res.alphas, 4)}  (sum={np.sum(res.alphas):.2e})")
         print(f"  impedances p_0..p_{n + 1} = {np.round(res.impedances, 4)}")
         for N in N_values:

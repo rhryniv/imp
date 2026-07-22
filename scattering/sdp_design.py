@@ -582,7 +582,8 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
                        sigma: tuple | None = None, warm_start_alphas: np.ndarray | None = None,
                        use_sdp_warm_start: bool = True,
                        smaller_solutions: dict[int, np.ndarray] | None = None,
-                       n_pad_variants: int = 4, gamma_bound: float = 0.9995,
+                       n_pad_variants: int = 4, use_continuation_seed: bool = True,
+                       gamma_bound: float = 0.9995,
                        n_grid_B: int = 400, n_grid_C: int = 400, n_restarts: int = 8,
                        seed: int = 0, solver: str = "CLARABEL") -> LayerDesignResult:
     """Directly optimize over realizable layer sequences (see the section
@@ -594,6 +595,14 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
     added as extra warm-start seeds -- lets the search actually reach the
     "same core structure, wider spacing" designs that a naive random
     restart essentially never finds on its own.
+
+    use_continuation_seed: also run design_via_continuation (see below) for
+    each sign pattern tried and add its result as one more warm-start seed.
+    Cheap (one homotopy trajectory, not a restart batch) and often lands
+    very close to the best basin directly; when the sign pattern isn't the
+    one reachable from alpha=0, the continuation call itself reports
+    infeasible and is simply skipped, so this can only add candidates, not
+    remove any.
 
     Every returned design is realizable by construction; .verified means
     (B) and (C) additionally hold on a fine grid (there is no
@@ -627,9 +636,19 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
     sigmas = [sigma] if sigma is not None else list(itertools.product((1, -1), repeat=len(J0)))
     best_overall = None
     for sig in sigmas:
-        seeds = list(base_seeds)
-        n_per_seed = max(1, n_restarts // len(base_seeds))
-        for bs in base_seeds:
+        sig_seeds = list(base_seeds)
+        if use_continuation_seed:
+            try:
+                cont_res = design_via_continuation(n, J0, J1, mu0, sigma=sig,
+                                                     gamma_bound=gamma_bound,
+                                                     n_grid_B=n_grid_B, n_grid_C=n_grid_C)
+                if cont_res.alphas is not None:
+                    sig_seeds.append(np.tanh(cont_res.alphas[:n]))
+            except Exception:
+                pass
+        seeds = list(sig_seeds)
+        n_per_seed = max(1, n_restarts // len(sig_seeds))
+        for bs in sig_seeds:
             seeds += [np.clip(bs + 0.05 * rng.standard_normal(n), -gamma_bound, gamma_bound)
                       for _ in range(n_per_seed)]
         result = _solve_layers_for_sigma(n, J0, J1, mu0, sig, gamma_bound, n_grid_B, n_grid_C, seeds)
@@ -655,6 +674,159 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
 
     return LayerDesignResult(n=n, mu0=mu0, status="optimal", sigma=sig, alphas=alphas, a=a,
                               impedances=impedances, u=u, delta1=delta1, verified=True,
+                              achieved_mu=mu_min if J0 else float("inf"))
+
+
+# --------------------------------------------------------------------------
+# design_via_continuation: homotopy from the trivial alpha=0 structure
+# --------------------------------------------------------------------------
+#
+# alpha=0 identically means q2=0 identically (no back-scattering at all,
+# every layer is transparent): T_N=1 exactly for *every* theta and N, so
+# constraint (B) holds on I1 with the best possible u=1, trivially. But
+# kappa_B(theta) = cos(n*theta) there (a=e_n, pure Chebyshev T_n), which
+# only *touches* +-1 at isolated points, not over an interval, so no real
+# stop band exists yet at this point -- constraint (C) requires genuinely
+# moving away from it.
+#
+# design_via_layers's random-restart search treats mu0 as a fixed target
+# from the start, so every restart independently has to find a basin that
+# satisfies the *full* depth requirement; nothing ties the restarts
+# together, and (per the multiband_demo.py investigation) they can all fall
+# into the same mediocre generic attractor regardless of warm start.
+# design_via_continuation instead ramps the required depth mu up from 0 to
+# mu0 over a sequence of small steps, re-solving at each step from the
+# *previous* step's converged alphas. That keeps the whole trajectory
+# inside a single, continuously-deformed basin anchored at the one point
+# (alpha=0) known to be exactly optimal for (B) -- rather than gambling on
+# a disconnected random start landing somewhere good.
+
+def _continuation_constraints(a_of, theta_B, theta_C, sigma, coshmu0):
+    constraints = []
+    for th in theta_B:
+        def fun(x, th=th):
+            return x[-1] - q1_abs_sq(a_of(x[:-1]), th)
+        constraints.append({"type": "ineq", "fun": fun})
+    for th, sig in zip(theta_C, sigma):
+        def fun(x, th=th, sig=sig):
+            return sig * kappa_B(a_of(x[:-1]), th) - coshmu0
+        constraints.append({"type": "ineq", "fun": fun})
+    return constraints
+
+
+def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
+                             sigma: tuple | None = None, n_steps: int = 12, max_bisections: int = 5,
+                             gamma_bound: float = 0.9995, n_grid_B: int = 400, n_grid_C: int = 400,
+                             maxiter: int = 400) -> LayerDesignResult:
+    """Homotopy solver: start at alphas=0 and ramp the required stop-band
+    depth mu up from 0 to mu0 in n_steps stages, warm-starting each stage
+    from the previous stage's alphas (see section docstring above). If a
+    stage fails to reach a verified point, the step is halved (up to
+    max_bisections times) before giving up -- makes the schedule robust to
+    a coarse n_steps without needing it finer everywhere.
+
+    If sigma is None, each J0 component's sign defaults to the sign of
+    cos(n*theta) at its midpoint -- the "band" of the alpha=0 starting
+    point's kappa_B=cos(n theta) that the component sits in, which is the
+    only sign a continuation starting there can reach without first
+    crossing kappa_B=0 (a discontinuous jump in which oscillation is being
+    deepened).
+
+    Returns a LayerDesignResult; status is "optimal" if mu0 was fully
+    reached, "partial" if the schedule stalled at some smaller achieved
+    mu (still a valid, realizable design -- Prop. 5.4a: any mu0>0 is fine,
+    N does the rest), or "infeasible" if not even the first tiny step
+    succeeded.
+    """
+    from .forward import a_from_alphas
+
+    if sigma is None:
+        sigma = tuple(int(np.sign(np.cos(n * 0.5 * (al + be)))) or 1 for al, be in J0)
+
+    theta_B = [np.linspace(g, d, n_grid_B) for g, d in J1]
+    theta_C = [np.linspace(al, be, n_grid_C) for al, be in J0]
+
+    def a_of(gamma_free):
+        return a_from_alphas(_free_to_alphas(gamma_free))
+
+    def objective(x):
+        return x[-1]
+
+    def objective_grad(x):
+        g = np.zeros(len(x))
+        g[-1] = 1.0
+        return g
+
+    bounds = [(-gamma_bound, gamma_bound)] * n + [(1.0, None)]
+
+    def verify(gamma_free, u, coshmu0_k, tol=1e-6):
+        a = a_of(gamma_free)
+        for th in theta_B:
+            if np.max(q1_abs_sq(a, th)) > u + tol:
+                return False
+        for th, sig in zip(theta_C, sigma):
+            if np.min(sig * kappa_B(a, th)) < coshmu0_k - tol:
+                return False
+        return True
+
+    def try_stage(gamma_start, mu_k):
+        coshmu0_k = np.cosh(mu_k)
+        constraints = _continuation_constraints(a_of, theta_B, theta_C, sigma, coshmu0_k)
+        Gmax = max((np.max(q1_abs_sq(a_of(gamma_start), th)) for th in theta_B), default=1.0)
+        u0 = max(1.0 + 1e-9, Gmax)
+        x0 = np.concatenate([gamma_start, [u0]])
+        res = minimize(objective, x0, jac=objective_grad, constraints=constraints, bounds=bounds,
+                        method="SLSQP", options={"maxiter": maxiter, "ftol": 1e-14})
+        if not np.all(np.isfinite(res.x)):
+            return None
+        gamma_try, u_try = res.x[:-1], float(res.x[-1])
+        if verify(gamma_try, u_try, coshmu0_k):
+            return gamma_try, u_try
+        return None
+
+    gamma_free = np.zeros(n)
+    mu_prev, u_prev = 0.0, 1.0
+    schedule = list(np.linspace(0.0, mu0, n_steps + 1)[1:]) if n_steps > 0 else [mu0]
+    idx = 0
+    while idx < len(schedule):
+        mu_target = schedule[idx]
+        lo, hi = mu_prev, mu_target
+        outcome = try_stage(gamma_free, hi)
+        bisections = 0
+        while outcome is None and bisections < max_bisections:
+            hi = (lo + hi) / 2.0
+            outcome = try_stage(gamma_free, hi)
+            bisections += 1
+        if outcome is None:
+            break
+        gamma_free, u_prev = outcome
+        mu_prev = hi
+        if hi >= mu_target - 1e-12:
+            idx += 1
+        # else: only got partway via bisection -- retry from here toward
+        # the same (still unmet) schedule target on the next iteration.
+
+    if mu_prev <= 0.0:
+        return LayerDesignResult(n=n, mu0=mu0, status="infeasible", sigma=sigma)
+
+    alphas = _free_to_alphas(gamma_free)
+    a = a_of(gamma_free)
+    delta1 = float(np.sqrt(max(u_prev, 0.0)) - 1.0)
+    status = "optimal" if mu_prev >= mu0 - 1e-9 else "partial"
+
+    impedances = np.empty(n + 2)
+    impedances[0] = 1.0
+    for j, alpha_j in enumerate(alphas):
+        impedances[j + 1] = impedances[j] * np.exp(alpha_j)
+
+    mu_min = np.inf
+    for (al, be), s in zip(J0, sigma):
+        kap = s * kappa_B(a, np.linspace(al, be, 4000))
+        mu_min = min(mu_min, np.arccosh(max(float(np.min(kap)), 1.0)))
+
+    return LayerDesignResult(n=n, mu0=mu0, status=status, sigma=sigma, alphas=alphas, a=a,
+                              impedances=impedances, u=u_prev, delta1=delta1,
+                              verified=(status == "optimal"),
                               achieved_mu=mu_min if J0 else float("inf"))
 
 
