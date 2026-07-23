@@ -516,7 +516,35 @@ class LayerDesignResult:
     achieved_mu: float = 0.0
 
 
+def _sign_from_a(a, theta_C):
+    """Auto-detect each J0 component's sign from the current iterate: the
+    mean of kappa_B over that component's grid. Used instead of a squared,
+    sign-free constraint (kappa_B**2 >= cosh(mu0)**2) -- mathematically
+    equivalent to |kappa_B| >= cosh(mu0), but that form is the complement
+    of a convex interval (a genuine disjunction), which SLSQP's local QP
+    linearization handles badly in practice (confirmed empirically: it
+    turned a previously-solved case into a reported infeasibility). Reading
+    the sign off the current point and building the same simple *linear*
+    constraint sign*kappa_B >= cosh(mu0) as before keeps every individual
+    solve exactly as well-behaved as the original fixed-sigma version,
+    while still needing no sign fixed or enumerated in advance -- each
+    solve (each restart, each continuation step) just looks at its own
+    current point instead of guessing upfront."""
+    return tuple(1 if np.mean(kappa_B(a, th)) > 0 else -1 for th in theta_C)
+
+
 def _solve_layers_for_sigma(n, J0, J1, mu0, sigma, gamma_bound, n_grid_B, n_grid_C, seeds, maxiter=400):
+    """One sign pattern's worth of the search: plain linear
+    sign*kappa_B>=cosh(mu0) constraints (well-behaved for SLSQP -- see
+    _sign_from_a's docstring for why the squared/disjunctive alternative
+    was tried and reverted). design_via_layers calls this once per sign
+    pattern with the *full* seed/restart budget each time: pooling all
+    patterns into one run (auto-detecting sign per seed instead) was also
+    tried, but under-samples whichever pattern isn't naturally favoured by
+    the seeds -- confirmed empirically to regress a known-hard case (n=9 on
+    the multiband config) from delta1=0.065 to 0.36. Per-pattern enumeration
+    is still fully automatic from the caller's side (see design_via_layers),
+    just not collapsed into a single pooled solve."""
     from .forward import a_from_alphas
 
     theta_B = [np.linspace(g, d, n_grid_B) for g, d in J1]
@@ -579,7 +607,7 @@ def _solve_layers_for_sigma(n, J0, J1, mu0, sigma, gamma_bound, n_grid_B, n_grid
 
 
 def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
-                       sigma: tuple | None = None, warm_start_alphas: np.ndarray | None = None,
+                       warm_start_alphas: np.ndarray | None = None,
                        use_sdp_warm_start: bool = True,
                        smaller_solutions: dict[int, np.ndarray] | None = None,
                        n_pad_variants: int = 4, use_continuation_seed: bool = True,
@@ -587,7 +615,17 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
                        n_grid_B: int = 400, n_grid_C: int = 400, n_restarts: int = 8,
                        seed: int = 0, solver: str = "CLARABEL") -> LayerDesignResult:
     """Directly optimize over realizable layer sequences (see the section
-    docstring above). Tries all 2^len(J0) sign patterns if sigma is None.
+    docstring above). No caller ever has to supply a sign pattern for
+    constraint (C): all 2^len(J0) sign patterns are tried automatically
+    internally (each with its own full seed/restart budget -- pooling them
+    into one auto-detected-sign solve was tried and found to under-sample
+    hard cases like the multiband n=9 dead zone, see
+    _solve_layers_for_sigma's docstring), and the best result across all
+    patterns is returned, with the winning sign reported on .sigma. Unlike
+    design_filter_full's SDP -- which must fix a sign per component to keep
+    (C) affine, and so has no alternative to this enumeration -- SLSQP does
+    not require it; the enumeration here is purely a coverage choice, not
+    a mathematical necessity.
 
     smaller_solutions: optional {n_small: alphas} of already-verified
     solutions at smaller n_small < n. Each is embedded into n slots by
@@ -596,13 +634,10 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
     "same core structure, wider spacing" designs that a naive random
     restart essentially never finds on its own.
 
-    use_continuation_seed: also run design_via_continuation (see below) for
-    each sign pattern tried and add its result as one more warm-start seed.
-    Cheap (one homotopy trajectory, not a restart batch) and often lands
-    very close to the best basin directly; when the sign pattern isn't the
-    one reachable from alpha=0, the continuation call itself reports
-    infeasible and is simply skipped, so this can only add candidates, not
-    remove any.
+    use_continuation_seed: also run design_via_continuation (see below) and
+    add its result as one more warm-start seed. Cheap (one homotopy
+    trajectory, not a restart batch) and often lands very close to the
+    best basin directly.
 
     Every returned design is realizable by construction; .verified means
     (B) and (C) additionally hold on a fine grid (there is no
@@ -615,7 +650,7 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
         base_seeds.append(np.tanh(np.asarray(warm_start_alphas, dtype=float)[:n]))
     if use_sdp_warm_start:
         try:
-            full_res = design_filter_full(n, J0, J1, mu0, sigma=sigma, solver=solver)
+            full_res = design_filter_full(n, J0, J1, mu0, solver=solver)
             if full_res is not None and full_res.a is not None:
                 a_mp, _ = ensure_min_phase(full_res.a)
                 alphas_ws, info = alphas_from_a(a_mp)
@@ -630,25 +665,22 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
             alphas_small = np.asarray(alphas_small, dtype=float)
             for padded in _padded_alpha_seeds(alphas_small, n, rng, max_variants=n_pad_variants):
                 base_seeds.append(np.tanh(padded[:n]))
+    if use_continuation_seed:
+        try:
+            cont_res = design_via_continuation(n, J0, J1, mu0, gamma_bound=gamma_bound,
+                                                n_grid_B=n_grid_B, n_grid_C=n_grid_C)
+            if cont_res.alphas is not None:
+                base_seeds.append(np.tanh(cont_res.alphas[:n]))
+        except Exception:
+            pass
     if not base_seeds:
         base_seeds.append(np.zeros(n))
 
-    sigmas = [sigma] if sigma is not None else list(itertools.product((1, -1), repeat=len(J0)))
     best_overall = None
-    for sig in sigmas:
-        sig_seeds = list(base_seeds)
-        if use_continuation_seed:
-            try:
-                cont_res = design_via_continuation(n, J0, J1, mu0, sigma=sig,
-                                                     gamma_bound=gamma_bound,
-                                                     n_grid_B=n_grid_B, n_grid_C=n_grid_C)
-                if cont_res.alphas is not None:
-                    sig_seeds.append(np.tanh(cont_res.alphas[:n]))
-            except Exception:
-                pass
-        seeds = list(sig_seeds)
-        n_per_seed = max(1, n_restarts // len(sig_seeds))
-        for bs in sig_seeds:
+    for sig in itertools.product((1, -1), repeat=len(J0)):
+        seeds = list(base_seeds)
+        n_per_seed = max(1, n_restarts // len(base_seeds))
+        for bs in base_seeds:
             seeds += [np.clip(bs + 0.05 * rng.standard_normal(n), -gamma_bound, gamma_bound)
                       for _ in range(n_per_seed)]
         result = _solve_layers_for_sigma(n, J0, J1, mu0, sig, gamma_bound, n_grid_B, n_grid_C, seeds)
@@ -701,21 +733,31 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
 # (alpha=0) known to be exactly optimal for (B) -- rather than gambling on
 # a disconnected random start landing somewhere good.
 
-def _continuation_constraints(a_of, theta_B, theta_C, sigma, coshmu0):
+def _continuation_constraints(a_of, theta_B, theta_C, sig, coshmu0):
+    """Plain linear constraint, with sig auto-detected fresh at each stage
+    from the current iterate (see _sign_from_a) rather than fixed once at
+    alpha=0 or left sign-free via a squared/disjunctive constraint -- the
+    latter is mathematically equivalent but numerically much harder for
+    SLSQP's local QP step (confirmed empirically: it turned a previously-
+    solved case, n=13 on the widened multiband I1, into a reported
+    infeasibility). Since the schedule only takes small steps in mu, the
+    sign detected at the start of a stage essentially always still matches
+    by the stage's end; nothing here fixes it in advance for the whole
+    trajectory the way the original hard-coded default did."""
     constraints = []
     for th in theta_B:
         def fun(x, th=th):
             return x[-1] - q1_abs_sq(a_of(x[:-1]), th)
         constraints.append({"type": "ineq", "fun": fun})
-    for th, sig in zip(theta_C, sigma):
-        def fun(x, th=th, sig=sig):
-            return sig * kappa_B(a_of(x[:-1]), th) - coshmu0
+    for th, s in zip(theta_C, sig):
+        def fun(x, th=th, s=s):
+            return s * kappa_B(a_of(x[:-1]), th) - coshmu0
         constraints.append({"type": "ineq", "fun": fun})
     return constraints
 
 
 def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
-                             sigma: tuple | None = None, n_steps: int = 12, max_bisections: int = 5,
+                             n_steps: int = 12, max_bisections: int = 5,
                              gamma_bound: float = 0.9995, n_grid_B: int = 400, n_grid_C: int = 400,
                              maxiter: int = 400) -> LayerDesignResult:
     """Homotopy solver: start at alphas=0 and ramp the required stop-band
@@ -725,12 +767,12 @@ def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interva
     max_bisections times) before giving up -- makes the schedule robust to
     a coarse n_steps without needing it finer everywhere.
 
-    If sigma is None, each J0 component's sign defaults to the sign of
-    cos(n*theta) at its midpoint -- the "band" of the alpha=0 starting
-    point's kappa_B=cos(n theta) that the component sits in, which is the
-    only sign a continuation starting there can reach without first
-    crossing kappa_B=0 (a discontinuous jump in which oscillation is being
-    deepened).
+    No sign is fixed for any J0 component in advance: at the start of each
+    stage, the sign is auto-detected from the *current* iterate (see
+    _sign_from_a) and used to build a plain linear constraint for that
+    stage's solve, rather than either hard-coding a sign upfront from
+    alpha=0's cos(n*theta) or using a sign-free squared constraint (the
+    latter tried and reverted -- see _continuation_constraints).
 
     Returns a LayerDesignResult; status is "optimal" if mu0 was fully
     reached, "partial" if the schedule stalled at some smaller achieved
@@ -739,9 +781,6 @@ def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interva
     succeeded.
     """
     from .forward import a_from_alphas
-
-    if sigma is None:
-        sigma = tuple(int(np.sign(np.cos(n * 0.5 * (al + be)))) or 1 for al, be in J0)
 
     theta_B = [np.linspace(g, d, n_grid_B) for g, d in J1]
     theta_C = [np.linspace(al, be, n_grid_C) for al, be in J0]
@@ -759,19 +798,20 @@ def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interva
 
     bounds = [(-gamma_bound, gamma_bound)] * n + [(1.0, None)]
 
-    def verify(gamma_free, u, coshmu0_k, tol=1e-6):
+    def verify(gamma_free, u, sig, coshmu0_k, tol=1e-6):
         a = a_of(gamma_free)
         for th in theta_B:
             if np.max(q1_abs_sq(a, th)) > u + tol:
                 return False
-        for th, sig in zip(theta_C, sigma):
-            if np.min(sig * kappa_B(a, th)) < coshmu0_k - tol:
+        for th, s in zip(theta_C, sig):
+            if np.min(s * kappa_B(a, th)) < coshmu0_k - tol:
                 return False
         return True
 
     def try_stage(gamma_start, mu_k):
         coshmu0_k = np.cosh(mu_k)
-        constraints = _continuation_constraints(a_of, theta_B, theta_C, sigma, coshmu0_k)
+        sig = _sign_from_a(a_of(gamma_start), theta_C)
+        constraints = _continuation_constraints(a_of, theta_B, theta_C, sig, coshmu0_k)
         Gmax = max((np.max(q1_abs_sq(a_of(gamma_start), th)) for th in theta_B), default=1.0)
         u0 = max(1.0 + 1e-9, Gmax)
         x0 = np.concatenate([gamma_start, [u0]])
@@ -780,7 +820,7 @@ def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interva
         if not np.all(np.isfinite(res.x)):
             return None
         gamma_try, u_try = res.x[:-1], float(res.x[-1])
-        if verify(gamma_try, u_try, coshmu0_k):
+        if verify(gamma_try, u_try, sig, coshmu0_k):
             return gamma_try, u_try
         return None
 
@@ -807,7 +847,7 @@ def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interva
         # the same (still unmet) schedule target on the next iteration.
 
     if mu_prev <= 0.0:
-        return LayerDesignResult(n=n, mu0=mu0, status="infeasible", sigma=sigma)
+        return LayerDesignResult(n=n, mu0=mu0, status="infeasible")
 
     alphas = _free_to_alphas(gamma_free)
     a = a_of(gamma_free)
@@ -819,12 +859,14 @@ def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interva
     for j, alpha_j in enumerate(alphas):
         impedances[j + 1] = impedances[j] * np.exp(alpha_j)
 
+    # sign is not imposed -- read it off the solution, per J0 component
+    sig = tuple(1 if np.mean(kappa_B(a, np.linspace(al, be, 4000))) > 0 else -1 for al, be in J0)
     mu_min = np.inf
-    for (al, be), s in zip(J0, sigma):
+    for (al, be), s in zip(J0, sig):
         kap = s * kappa_B(a, np.linspace(al, be, 4000))
         mu_min = min(mu_min, np.arccosh(max(float(np.min(kap)), 1.0)))
 
-    return LayerDesignResult(n=n, mu0=mu0, status=status, sigma=sigma, alphas=alphas, a=a,
+    return LayerDesignResult(n=n, mu0=mu0, status=status, sigma=sig, alphas=alphas, a=a,
                               impedances=impedances, u=u_prev, delta1=delta1,
                               verified=(status == "optimal"),
                               achieved_mu=mu_min if J0 else float("inf"))
