@@ -417,6 +417,35 @@ def design_filter_full(n: int, J0: Sequence[Interval], J1: Sequence[Interval], m
     return best_verified_mp or best_verified_any or best_any
 
 
+def sdp_lower_bound(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
+                     solver: str = "CLARABEL", **solver_kwargs) -> float | None:
+    """Tightest valid lower bound on the true achievable delta at this n,
+    from the *raw* (pre-polish) SDP relaxation. For a fixed sign pattern,
+    relaxing the rank-1 constraint A ~ a a^T to A >= a a^T (Schur
+    complement) can only enlarge the feasible set, so the relaxed optimum
+    is <= the true optimum for that sign pattern; minimizing the relaxed
+    optimum over all 2^len(J0) sign patterns therefore lower-bounds the
+    true overall optimum (also a min over sign patterns).
+
+    This is deliberately *not* the same as design_filter_full(...).problem:
+    that reflects whichever single sign pattern gave the best *polished*
+    result, which need not be the pattern with the tightest raw relaxed
+    value -- using it as a "lower bound" can be unsound (confirmed: it
+    produced an achieved delta below the reported bound on a test case).
+    Returns None if no sign pattern's relaxation solved."""
+    T = cheb_to_mono_matrix(n)
+    best_u = None
+    for sig in itertools.product((1, -1), repeat=len(J0)):
+        res = _solve_full_for_sigma(n, J0, J1, mu0, sig, T, solver, solver_kwargs)
+        if res.problem is not None and res.problem.value is not None:
+            u_lb = float(res.problem.value)
+            if best_u is None or u_lb < best_u:
+                best_u = u_lb
+    if best_u is None:
+        return None
+    return float(np.sqrt(max(best_u, 0.0)) - 1.0)
+
+
 # --------------------------------------------------------------------------
 # design_via_layers: optimize directly over the physical Schur parameters
 # --------------------------------------------------------------------------
