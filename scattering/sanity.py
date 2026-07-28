@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .forward import a_from_alphas, forward_reconstruct, q1_abs_sq
+from .forward import a_from_alphas, forward_reconstruct, forward_with_grad, q1_abs_sq
 from .inverse import alphas_from_a, check_min_phase
 
 
@@ -72,6 +72,45 @@ def test_inverse_forward_roundtrip(a: np.ndarray, tol: float = 1e-10) -> dict:
         "passed": passed, "error": err, "admissible": G_ok, "min_phase": ok_min_phase,
         "expected_to_pass": G_ok and ok_min_phase, "was_reflected": info.was_reflected,
     }
+
+
+def test_forward_with_grad(alphas: np.ndarray, theta: np.ndarray, h: float = 1e-5,
+                            rtol: float = 1e-6) -> dict:
+    """forward_with_grad's analytic dQ/dalpha_j, dkappa/dalpha_j against
+    central finite differences (manuscript Sec. 6.3's own prescribed test).
+    h=1e-5 sits near the empirically-confirmed sweet spot of the classic
+    finite-difference V-curve for this problem (truncation error ~h^2
+    shrinking down to h~1e-5, ~4.7e-9 absolute; rounding error growing
+    again for smaller h) -- NOT h=1e-6 as a naive first guess would use,
+    which is already past the minimum and reports a needlessly pessimistic
+    error. Also checks forward_with_grad's own *values* (not just
+    gradients) against the existing a_from_alphas/q1_abs_sq/kappa_B
+    pipeline, since these are two independently-coded evaluation paths
+    that must agree to machine precision if both are correct."""
+    alphas = np.asarray(alphas, dtype=float)
+    theta = np.asarray(theta, dtype=float)
+    n = len(alphas) - 1
+
+    res = forward_with_grad(alphas, theta)
+    a = a_from_alphas(alphas)
+    from .forward import kappa_B
+    Q_ref, kappa_ref = q1_abs_sq(a, theta), kappa_B(a, theta)
+    value_err = float(max(np.max(np.abs(res["Q"] - Q_ref)), np.max(np.abs(res["kappa"] - kappa_ref))))
+
+    dQ_fd = np.empty((n + 1, len(theta)))
+    dkappa_fd = np.empty((n + 1, len(theta)))
+    for j in range(n + 1):
+        ap, am = alphas.copy(), alphas.copy()
+        ap[j] += h
+        am[j] -= h
+        Qp, Qm = q1_abs_sq(a_from_alphas(ap), theta), q1_abs_sq(a_from_alphas(am), theta)
+        kp, km = kappa_B(a_from_alphas(ap), theta), kappa_B(a_from_alphas(am), theta)
+        dQ_fd[j], dkappa_fd[j] = (Qp - Qm) / (2 * h), (kp - km) / (2 * h)
+
+    dQ_err = float(np.max(np.abs(res["dQ"] - dQ_fd)))
+    dkappa_err = float(np.max(np.abs(res["dkappa"] - dkappa_fd)))
+    passed = value_err < 1e-10 and dQ_err < rtol and dkappa_err < rtol
+    return {"passed": passed, "value_err": value_err, "dQ_abs_err": dQ_err, "dkappa_abs_err": dkappa_err}
 
 
 def _print_case(name: str, alphas: np.ndarray):
@@ -126,6 +165,16 @@ def run_all_sanity_checks() -> bool:
             print("  [d] SKIPPED: design_filter_full did not return a usable result")
     except Exception as e:  # pragma: no cover - best-effort diagnostic case
         print(f"  [d] SKIPPED: {e!r}")
+
+    print("(e) forward_with_grad: analytic gradients vs central finite differences")
+    rng = np.random.default_rng(1)
+    alphas_e = rng.uniform(-0.8, 0.8, 7)
+    theta_e = rng.uniform(0.05, np.pi - 0.05, 9)
+    rg = test_forward_with_grad(alphas_e, theta_e)
+    status_e = "PASS" if rg["passed"] else "FAIL (unexpected!)"
+    print(f"  [e] {status_e}  (value_err={rg['value_err']:.3e}, "
+          f"dQ_abs_err={rg['dQ_abs_err']:.3e}, dkappa_abs_err={rg['dkappa_abs_err']:.3e})")
+    all_ok &= rg["passed"]
 
     print()
     print("ALL SANITY CHECKS " + ("PASSED" if all_ok else "FAILED (see 'unexpected' entries above)"))

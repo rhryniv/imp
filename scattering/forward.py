@@ -42,6 +42,88 @@ def a_from_alphas(alphas: np.ndarray) -> np.ndarray:
     return p1[::-1].copy()
 
 
+def forward_with_grad(alphas: np.ndarray, theta: np.ndarray):
+    """Pointwise evaluation of p1(theta), Q(theta)=|p1|^2, kappa(theta), and
+    their exact gradients w.r.t. every alpha_j, at given theta nodes
+    (manuscript Sec. 6.3, "Exact gradients"). Unlike forward_reconstruct
+    (which returns p1/p2 as *coefficient arrays*, used for the a-vector /
+    Chebyshev-domain machinery), this evaluates directly at theta via
+    w=exp(-i*theta), matching the direct-optimisation grid-constraint use
+    case (sdp_design.design_direct) where per-node analytic gradients are
+    needed for SLSQP.
+
+    Recursion: p^{(j)} = A_j p^{(j-1)}, p^{(-1)}=(1,0)^T, with
+        A_j = C(alpha_j) diag(1,w),  C(alpha)=exp(alpha K),  K=[[0,1],[1,0]],
+    so that d/dalpha_j A_j = K A_j exactly. With prefix products
+    S_j = A_j...A_0 and suffix products L_j = A_n...A_{j+1}, the product
+    rule gives d/dalpha_j (A_n...A_0) = L_j K S_j for every j -- one
+    forward sweep (caching p^{(j)} = S_j (1,0)^T) and one backward sweep
+    (caching L_j) give all n+1 derivatives at every node in O(n) work per
+    node, O(1) extra work per (node, j) pair thereafter.
+
+    Returns a dict with p1, Q, kappa (each shape (M,)) and dp1, dQ, dkappa
+    (each shape (n+1, M), one row per alpha_j, *before* the free-variable
+    elimination alpha_n=-sum(alpha_{<n}) -- see grad_free_vars below for
+    that last step).
+    """
+    alphas = np.asarray(alphas, dtype=float)
+    n = len(alphas) - 1
+    theta = np.atleast_1d(np.asarray(theta, dtype=float))
+    M = theta.shape[0]
+    w = np.exp(-1j * theta)                     # (M,)
+    wbar_n = np.exp(1j * n * theta)              # conj(w)^n, |w|=1 on the real theta axis
+
+    ch, sh = np.cosh(alphas), np.sinh(alphas)    # (n+1,)
+
+    # A_j, shape (n+1, M, 2, 2)
+    A = np.empty((n + 1, M, 2, 2), dtype=complex)
+    A[:, :, 0, 0] = ch[:, None]
+    A[:, :, 0, 1] = sh[:, None] * w[None, :]
+    A[:, :, 1, 0] = sh[:, None]
+    A[:, :, 1, 1] = ch[:, None] * w[None, :]
+
+    # Forward sweep: p[j+1] = p^{(j)} for j=-1,...,n (index shifted by 1; p[0]=p^{(-1)})
+    p = np.empty((n + 2, M, 2), dtype=complex)
+    p[0, :, 0], p[0, :, 1] = 1.0, 0.0
+    for j in range(n + 1):
+        p[j + 1, :, 0] = A[j, :, 0, 0] * p[j, :, 0] + A[j, :, 0, 1] * p[j, :, 1]
+        p[j + 1, :, 1] = A[j, :, 1, 0] * p[j, :, 0] + A[j, :, 1, 1] * p[j, :, 1]
+    p1, p2 = p[n + 1, :, 0], p[n + 1, :, 1]
+
+    # Backward sweep: L[j] = L_j = A_n...A_{j+1}, for j=0,...,n (L_n = I)
+    L = np.empty((n + 1, M, 2, 2), dtype=complex)
+    Lcur = np.zeros((M, 2, 2), dtype=complex)
+    Lcur[:, 0, 0] = Lcur[:, 1, 1] = 1.0
+    L[n] = Lcur
+    for j in range(n, 0, -1):
+        Lcur = np.einsum('mij,mjk->mik', Lcur, A[j])
+        L[j - 1] = Lcur
+
+    # d/dalpha_j p^{(n)} = L_j K p^{(j)}, K=[[0,1],[1,0]] i.e. swaps components
+    Kp0, Kp1 = p[1:, :, 1], p[1:, :, 0]          # (n+1, M): K @ p^{(j)} for j=0..n
+    dp1 = L[:, :, 0, 0] * Kp0 + L[:, :, 0, 1] * Kp1
+    dp2 = L[:, :, 1, 0] * Kp0 + L[:, :, 1, 1] * Kp1
+
+    Q = np.abs(p1) ** 2
+    dQ = 2.0 * np.real(np.conj(p1)[None, :] * dp1)
+    kappa = np.real(wbar_n * p1)
+    dkappa = np.real(wbar_n[None, :] * dp1)
+
+    return {
+        "p1": p1, "p2": p2, "Q": Q, "kappa": kappa,
+        "dp1": dp1, "dp2": dp2, "dQ": dQ, "dkappa": dkappa,
+    }
+
+
+def grad_free_vars(dvals: np.ndarray) -> np.ndarray:
+    """Chain-rule step for the free-variable elimination alpha_n :=
+    -sum_{j<n} alpha_j (manuscript Sec. 6.3): given dvals of shape
+    (n+1, M) -- one row per alpha_j, from forward_with_grad -- returns the
+    gradient w.r.t. the n free variables alpha_0,...,alpha_{n-1}, shape
+    (n, M): d/dalpha_j(free) = d/dalpha_j - d/dalpha_n for j<n."""
+    return dvals[:-1] - dvals[-1]
+
+
 def kappa_B(a: np.ndarray, theta: np.ndarray) -> np.ndarray:
     """kappa_B(theta) = Re(sum_m a_m e^{i m theta}) = sum_m a_m cos(m theta)
     = Chebyshev evaluation of a at x = cos(theta) (eq. 5.7-5.8)."""

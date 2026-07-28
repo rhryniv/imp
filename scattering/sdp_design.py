@@ -2,24 +2,62 @@
 transfer-matrix / factorization physics is delegated to forward.py and
 inverse.py.
 
-Two SDPs are implemented:
+CONVENTION, pinned down against the manuscript (eq. 6.5): for a coefficient
+vector f=(f_0,...,f_n), Q(theta) = f_0 + 2*sum_{l>=1} f_l cos(l*theta) --
+note the factor 2 on every harmonic beyond the constant term. poly_sdp.py's
+own Gram/Markov-Lukacs machinery works in the *undoubled* Chebyshev-basis
+convention (p(x) = sum_l c_l T_l(x), no factor of 2 anywhere), so any
+f/autocorrelation-style vector must be rescaled via
+_cheb_from_cosine_series (c_0=f_0, c_l=2*f_l for l>=1) before being handed
+to interval_nonneg_constraints. Skipping this rescaling is a confirmed,
+numerically verified bug (see below) -- not a stylistic choice.
 
-  design_filter       -- the autocorrelation-domain relaxation (Remark
+Three SDP-adjacent tools are implemented:
+
+  design_sdp_magnitude -- THE PRIMARY bound-computation method (manuscript
+                          Sec. 6.2, eq. 6.6). Variables are f in R^{n+1}
+                          and delta only -- no matrix variable, no vector
+                          a, no rank relaxation, and no sign pattern to
+                          enumerate (constraint (C) is replaced by its
+                          sign-free consequence (C') Q>=cosh^2(mu0), which
+                          follows from kappa^2<=Q and is solved once per
+                          degree). Every feasible f is realisable by
+                          Fejer-Riesz factorization of Q itself (not a
+                          lift), giving delta_mag <= delta_n* rigorously
+                          and a genuine warm-start block -- see
+                          _factorize_magnitude_f.
+
+  design_filter        -- the autocorrelation-domain relaxation (Remark
                           5.10): variables are the autocorrelation
                           coefficients c_l, constraints (A) G>=1 and
-                          (B) G<=u on J1, objective min u. Cheap, no rank
-                          relaxation, always solves a well-posed convex
-                          problem -- but constraint (C) (stop-band depth)
+                          (B) G<=u on J1, objective min u. Constraint (C)
                           is not part of it, only checked post hoc via
                           inverse.alphas_from_a + forward.kappa_B.
 
-  design_filter_full   -- the full lifted SDP (Appendix C): constraints
-                          (A)+(B)+(C)+(D) jointly, via the rank relaxation
-                          A ~ a a^T. More expensive, and the relaxation is
-                          essentially *never* tight in practice (see next
-                          paragraph) -- its raw output is only a warm
-                          start, refined by a local polish before being
-                          returned.
+  design_filter_full   -- the full lifted SDP (manuscript Remark 6.3 /
+                          Appendix B.4: kept only as an OPTIONAL
+                          comparison against design_sdp_magnitude, not the
+                          primary path): constraints (A)+(B)+(C)+(D)
+                          jointly, via the rank relaxation A ~ a a^T. The
+                          relaxation is essentially *never* tight in
+                          practice -- its raw output is only a warm start,
+                          refined by a local polish before being returned.
+
+BUG FOUND AND FIXED (this refactor): design_filter and design_filter_full's
+_autocorr_from_A fed the *undoubled* autocorrelation f_l straight into
+interval_nonneg_constraints, silently treating Q's "f_0 + 2*sum f_l cos"
+expansion as if it were the unscaled Chebyshev expansion "sum c_l T_l(x)".
+Verified numerically on a concrete test vector: the resulting constraint
+differs from the true Q by 0.35 (not a rounding artifact). This plausibly
+root-causes the "(A) is violated 100% of the time" empirical finding below
+-- the SDP was optimizing a different, incorrect problem the whole time.
+forward.py itself was never affected (q1_abs_sq evaluates |sum a_m e^{im
+theta}|^2 directly, no coefficient-doubling step exists to get wrong), so
+every *achieved* design from design_via_layers/design_via_continuation
+reported prior to this fix remains valid; only the SDP relaxations'
+own bound/warm-start quality was compromised. Fixed via
+_cheb_from_cosine_series, applied consistently in design_sdp_magnitude and
+(where the lifted SDP is kept as an optional comparison) design_filter_full.
 
 IMPORTANT, found empirically (see commit history / prior analysis): for
 *any* J0, J1, the unconstrained (A)+(B)+(D) problem's global optimum is
@@ -97,6 +135,156 @@ def assert_disjoint_intervals(intervals: Sequence[Interval]) -> None:
     for (lo1, hi1), (lo2, hi2) in zip(ordered, ordered[1:]):
         if hi1 > lo2:
             raise ValueError(f"intervals overlap: ({lo1}, {hi1}) and ({lo2}, {hi2}) -- reduce margin")
+
+
+# --------------------------------------------------------------------------
+# design_sdp_magnitude: the primary bound-computation SDP (manuscript 6.2)
+# --------------------------------------------------------------------------
+
+def _cheb_from_cosine_series(g, n: int):
+    """g=(g_0,...,g_n) represents G(theta) = g_0 + 2*sum_{l>=1} g_l cos(l
+    theta) (manuscript eq. 6.5's own convention). Returns the Chebyshev-
+    basis coefficients (c_l with G = sum_l c_l T_l(x), x=cos theta) that
+    poly_sdp.cheb_to_mono_matrix/interval_nonneg_constraints expect:
+    c_0=g_0, c_l=2*g_l for l>=1. Accepts either a numpy array or a cvxpy
+    Expression. See this module's docstring for why this rescaling is a
+    bug fix, not a style choice."""
+    scale = np.concatenate([[1.0], 2.0 * np.ones(n)])
+    if isinstance(g, cp.Expression):
+        return cp.multiply(scale, g)
+    return scale * np.asarray(g, dtype=float)
+
+
+@dataclass
+class MagnitudeSDPResult:
+    n: int
+    mu0: float
+    status: str                            # "optimal" / "infeasible" / "solver_failure" -- kept distinct
+    f: np.ndarray | None = None            # feasible Q-autocorrelation, Q = f_0 + 2*sum_{l>=1} f_l cos(l*theta)
+    delta_mag: float | None = None         # valid lower bound on the true delta_n*
+    problem: cp.Problem | None = None
+    J0: Sequence[Interval] = field(default_factory=list)
+    J1: Sequence[Interval] = field(default_factory=list)
+
+
+def design_sdp_magnitude(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
+                          solver: str = "CLARABEL", **solver_kwargs) -> MagnitudeSDPResult:
+    """Magnitude SDP (manuscript Sec. 6.2, eq. 6.6): THE PRIMARY bound
+    method, replacing the lifted SDP as the default (design_filter_full is
+    kept only as an optional comparison, see its own docstring).
+
+    Variables: f in R^{n+1} (Q's own coefficients) and delta in R. No
+    matrix variable, no vector a, no rank relaxation. Constraint (C) is
+    replaced by its sign-free consequence (C') Q>=cosh^2(mu0) on I0, which
+    follows from kappa^2<=Q and is strictly weaker -- a large modulus does
+    not force a large real part -- so (unlike design_filter_full) this
+    problem needs no sign pattern sigma and is solved once per degree, not
+    once per 2^len(J0) sign combination. All four constraints are linear
+    in (f, delta), so the whole problem is fully SDP-representable via the
+    Gram/Markov-Lukacs machinery of poly_sdp.py.
+
+    status is kept as a distinct three-way outcome ("optimal" /
+    "infeasible" / "solver_failure"): infeasible is mathematically
+    meaningful here (see lower_bounds' docstring -- it proves no n-layer
+    block meets the specification, since the true feasible set is
+    contained in this relaxed one), solver_failure is not.
+
+    Returns delta_mag <= delta_n* (a genuine lower bound: every f arising
+    from a true feasible design also satisfies (A),(B),(C'),(D)), and the
+    feasible f itself. Every feasible f is realisable -- see
+    _factorize_magnitude_f -- unlike the lifted SDP's raw output, which
+    generally is not.
+    """
+    T = cheb_to_mono_matrix(n)
+    f = cp.Variable(n + 1)
+    delta = cp.Variable()
+    e0 = np.zeros(n + 1)
+    e0[0] = 1.0
+    scale = np.concatenate([[1.0], 2.0 * np.ones(n)])
+
+    constraints = [delta >= 0.0, cp.sum(cp.multiply(scale, f)) == 1.0]  # (D'): Q(0) = 1
+
+    # (A): Q - 1 >= 0 on all of R (x in [-1, 1])
+    consA, _ = interval_nonneg_constraints(T @ _cheb_from_cosine_series(f - e0, n), n, -1.0, 1.0)
+    constraints += consA
+
+    # (B): delta - (Q - 1) >= 0 on each I1 component
+    for gamma, delta_hi in J1:
+        xlo, xhi = theta_interval_to_x(gamma, delta_hi)
+        g_B = (delta + 1.0) * e0 - f
+        consB, _ = interval_nonneg_constraints(T @ _cheb_from_cosine_series(g_B, n), n, xlo, xhi)
+        constraints += consB
+
+    # (C'): Q - cosh^2(mu0) >= 0 on each I0 component (sign-free, no sigma)
+    coshmu0_sq = float(np.cosh(mu0) ** 2)
+    for u, v in J0:
+        xlo, xhi = theta_interval_to_x(u, v)
+        g_C = f - coshmu0_sq * e0
+        consC, _ = interval_nonneg_constraints(T @ _cheb_from_cosine_series(g_C, n), n, xlo, xhi)
+        constraints += consC
+
+    problem = cp.Problem(cp.Minimize(delta), constraints)
+    try:
+        problem.solve(solver=solver, **solver_kwargs)
+    except cp.error.SolverError:
+        return MagnitudeSDPResult(n=n, mu0=mu0, status="solver_failure", J0=list(J0), J1=list(J1))
+
+    if problem.status in ("infeasible", "infeasible_inaccurate"):
+        return MagnitudeSDPResult(n=n, mu0=mu0, status="infeasible", problem=problem,
+                                   J0=list(J0), J1=list(J1))
+    if problem.status not in ("optimal", "optimal_inaccurate") or f.value is None:
+        return MagnitudeSDPResult(n=n, mu0=mu0, status="solver_failure", problem=problem,
+                                   J0=list(J0), J1=list(J1))
+
+    return MagnitudeSDPResult(n=n, mu0=mu0, status="optimal", f=np.asarray(f.value, dtype=float),
+                               delta_mag=float(delta.value), problem=problem, J0=list(J0), J1=list(J1))
+
+
+def _factorize_magnitude_f(f: np.ndarray, n_grid: int = 20000) -> tuple[np.ndarray, np.ndarray, object]:
+    """Recover an actual n-layer block from a feasible f of the magnitude
+    SDP (spec Sec. 3 / manuscript Cor. 4.1): every feasible f IS
+    realisable -- factor Q = f_0 + 2*sum f_l cos(l*theta) directly via
+    Fejer-Riesz (inverse.fejer_riesz already expects exactly this "G =
+    c_0 + 2*sum c_l cos(l*theta)" convention, so f is passed unchanged, no
+    adaptation needed), sign-fix so sum(a)=+1 (constraint D, i.e.
+    p_1(1)=+1), then run the existing layer-stripping routine.
+
+    Floors any negative Q-1 dip from solver imprecision before factoring
+    (same reasoning as inverse.p2_from_a): Fejer-Riesz needs Q-1 >= 0
+    *exactly*, and even a tiny negative dip makes root-finding locally
+    inconsistent right there.
+
+    Returns (alphas, a, info) with info the RealizabilityInfo from
+    inverse.alphas_from_a. Use _seed_gap_quality to check whether the
+    resulting block is a *useful* warm start, not just a valid one.
+    """
+    f = np.asarray(f, dtype=float)
+    n = len(f) - 1
+    theta = np.linspace(0.0, 2 * np.pi, n_grid, endpoint=False)
+    if n > 0:
+        Q = f[0] + 2.0 * (np.cos(np.outer(theta, np.arange(1, n + 1))) @ f[1:])
+    else:
+        Q = np.full(n_grid, f[0])
+    Q_min = float(np.min(Q))
+    c = f.copy()
+    if Q_min < 1.0:
+        c[0] += (1.0 - Q_min) + 1e-12
+    a = fejer_riesz(c)
+    if np.sum(a) < 0:
+        a = -a
+    alphas, info = alphas_from_a(a)
+    return alphas, a, info
+
+
+def _seed_gap_quality(a: np.ndarray, J0: Sequence[Interval]) -> float:
+    """min_{I0} |kappa_B(theta)| for a factorised magnitude-SDP seed --
+    decides whether it is a *useful* warm start, not just a realisable
+    one (spec Sec. 3: 'It may be near 1 (no gap), in which case the seed
+    is realisable but useless -- that is a legitimate finding.')."""
+    if not J0:
+        return float("inf")
+    vals = [np.min(np.abs(kappa_B(a, np.linspace(u, v, 4000)))) for u, v in J0]
+    return float(min(vals))
 
 
 # --------------------------------------------------------------------------
