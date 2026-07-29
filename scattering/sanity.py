@@ -177,21 +177,32 @@ def run_all_sanity_checks() -> bool:
     r1, r2 = _print_case("c", alphas_c)
     all_ok &= (r1["passed"] or not r1["expected_to_pass"]) and (r2["passed"] or not r2["expected_to_pass"])
 
-    print("(d) Paper's n=8, mu0=1.0 worked example (via sdp_design, best-effort)")
+    print("(d) design_direct (n=5, mu0=0.3): should be reliably realizable, unlike the old lifted SDP")
+    # design_filter_full's raw output needed reflection/polishing and this
+    # case used to be a documented "FAIL (expected)" for exactly that
+    # reason. design_direct never has that problem: forward.a_from_alphas
+    # is realizable by construction (Prop. 4.4), so this checks that the
+    # new primary pipeline's own claim actually holds, not a specific
+    # numeric target (see module docstring re: not validating against the
+    # manuscript's own worked-example table values).
     try:
-        from .sdp_design import design_filter_full
+        from .sdp_design import design_direct
         J0 = [(np.pi / 6, np.pi / 4)]
         J1 = [(np.pi / 2, np.pi)]
-        res = design_filter_full(8, J0, J1, 1.0)
-        if res is not None and res.a is not None:
-            r2 = test_inverse_forward_roundtrip(res.a)
-            status2 = "PASS" if r2["passed"] else ("FAIL (expected)" if not r2["expected_to_pass"] else "FAIL (unexpected!)")
+        res = design_direct(5, J0, J1, 0.3)
+        if res.status == "optimal" and res.a is not None:
+            # tol loosened from the default 1e-10: unlike cases (a)-(c),
+            # res.a comes from an SLSQP optimum (ftol=1e-14 target, but
+            # actual convergence is limited to ~1e-7-1e-8), not an exact
+            # algebraic construction.
+            r2 = test_inverse_forward_roundtrip(res.a, tol=1e-6)
+            status2 = "PASS" if r2["passed"] else "FAIL (unexpected!)"
             print(f"  [d] inverse->forward: {status2}  (err={r2['error']:.3e}, "
                   f"admissible={r2['admissible']}, min_phase={r2['min_phase']}, "
-                  f"polish_verified={res.polish_verified})")
-            all_ok &= r2["passed"] or not r2["expected_to_pass"]
+                  f"delta={res.delta:.3e}, achieved_mu={res.achieved_mu:.3e})")
+            all_ok &= r2["passed"]
         else:
-            print("  [d] SKIPPED: design_filter_full did not return a usable result")
+            print(f"  [d] SKIPPED: design_direct did not return a usable result (status={res.status})")
     except Exception as e:  # pragma: no cover - best-effort diagnostic case
         print(f"  [d] SKIPPED: {e!r}")
 
