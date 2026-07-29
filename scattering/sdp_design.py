@@ -550,7 +550,7 @@ def _polish(a0: np.ndarray, J0: Sequence[Interval], J1: Sequence[Interval], mu0:
     return a0, u0, False
 
 
-def _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs):
+def _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs, add_magnitude_C_prime=False):
     a = cp.Variable(n + 1)
     A = cp.Variable((n + 1, n + 1), symmetric=True)
     u = cp.Variable()
@@ -583,6 +583,31 @@ def _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs):
         stop_cheb = sig * a - coshmu0 * e0
         consC, _ = interval_nonneg_constraints(T @ stop_cheb, n, xlo, xhi)
         constraints += consC
+
+    if add_magnitude_C_prime:
+        # The "conjunction" (spec Sec. 7): also impose the magnitude SDP's
+        # own sign-free (C') Q_A >= cosh^2(mu0) on each J0 component, using
+        # the SAME c as constraints (A)/(B) above. PROVABLY redundant given
+        # the lift is already here, for any n/J0/J1/sigma/mu0, not just
+        # empirically: the Schur complement lift>>0 is equivalent to
+        # A - a a^T being PSD, so for the complex vector w(theta) =
+        # (1, e^{i theta}, ..., e^{i n theta}), w^H A w >= w^H (a a^T) w =
+        # |a^T w|^2 = |sum_m a_m e^{im theta}|^2 -- and w^H A w is exactly
+        # Q_A(theta) (the identity _autocorr_from_A's diagonal-band-sum
+        # construction encodes). Combined with the trivial |z|^2 >= Re(z)^2,
+        # this gives Q_A(theta) >= kappa_a(theta)^2 for every theta, for
+        # ANY PSD-feasible (not just rank-1) A -- so on J0, exact (C)
+        # (sigma*kappa_a >= cosh(mu0) > 0) already forces
+        # Q_A >= kappa_a^2 >= cosh^2(mu0), i.e. (C'), automatically. Kept
+        # anyway (rather than skipped) so design_conjunction's own
+        # numerical value is an independent check of this argument, not an
+        # assumption baked into the code.
+        coshmu0_sq = coshmu0 ** 2
+        for lo, hi in J0:
+            xlo, xhi = theta_interval_to_x(lo, hi)
+            g_Cprime = c - coshmu0_sq * e0
+            consCprime, _ = interval_nonneg_constraints(T @ _cheb_from_cosine_series(g_Cprime, n), n, xlo, xhi)
+            constraints += consCprime
 
     problem = cp.Problem(cp.Minimize(u), constraints)
     problem.solve(solver=solver, **solver_kwargs)
@@ -659,6 +684,50 @@ def sdp_lower_bound(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0:
     if best_u is None:
         return None
     return float(max(best_u - 1.0, 0.0))
+
+
+def sdp_lower_bound_conjunction(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
+                                 solver: str = "CLARABEL", **solver_kwargs) -> float | None:
+    """The "conjunction" bound (spec Sec. 7, optional comparison): same as
+    sdp_lower_bound, but each sign pattern's lifted SDP also carries the
+    magnitude SDP's own sign-free (C') constraint alongside the lift's
+    exact (C) -- see _solve_full_for_sigma's add_magnitude_C_prime
+    docstring for the argument that this is provably redundant (Q_A >=
+    kappa_a^2 already follows from the lift's PSD structure alone, for any
+    relaxed A, not just rank-1), so this is expected to equal
+    sdp_lower_bound's own value up to solver noise, not improve on it.
+    Kept as a genuine, separately-solved SDP rather than skipped, so that
+    expectation is checked numerically, not assumed."""
+    T = cheb_to_mono_matrix(n)
+    best_u = None
+    for sig in itertools.product((1, -1), repeat=len(J0)):
+        res = _solve_full_for_sigma(n, J0, J1, mu0, sig, T, solver, solver_kwargs, add_magnitude_C_prime=True)
+        if res.problem is not None and res.problem.value is not None:
+            u_lb = float(res.problem.value)
+            if best_u is None or u_lb < best_u:
+                best_u = u_lb
+    if best_u is None:
+        return None
+    return float(max(best_u - 1.0, 0.0))
+
+
+def compare_relaxations(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
+                         solver: str = "CLARABEL", **solver_kwargs) -> dict:
+    """One n's worth of the spec Sec. 7 "optional comparison run": delta_mag
+    (design_sdp_magnitude's own bound), delta_lift (sdp_lower_bound, the
+    plain lifted SDP's raw relaxed bound), delta_both (sdp_lower_bound_
+    conjunction, lift + magnitude C'). Neither delta_mag nor delta_lift
+    dominates the other a priori (spec's own wording, and confirmed by
+    Experiment 1/2: delta_mag was sometimes far below delta_achieved,
+    sometimes closer). delta_both, though, has a provable relationship to
+    delta_lift specifically -- see sdp_lower_bound_conjunction's docstring
+    for why it should equal delta_lift, not improve on it -- which this
+    function's numbers should confirm rather than assume."""
+    mag_res = design_sdp_magnitude(n, J0, J1, mu0, solver=solver, **solver_kwargs)
+    delta_mag = mag_res.delta_mag if mag_res.status == "optimal" else None
+    delta_lift = sdp_lower_bound(n, J0, J1, mu0, solver=solver, **solver_kwargs)
+    delta_both = sdp_lower_bound_conjunction(n, J0, J1, mu0, solver=solver, **solver_kwargs)
+    return {"n": n, "delta_mag": delta_mag, "delta_lift": delta_lift, "delta_both": delta_both}
 
 
 # --------------------------------------------------------------------------

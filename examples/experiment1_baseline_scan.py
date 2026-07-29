@@ -48,10 +48,23 @@ def main():
     gap_lo, gap_hi, gap_sign = bg.gaps[0]
     print(f"    full gap  = [{gap_lo:.4f}, {gap_hi:.4f}]  full band = [{band_lo:.4f}, {band_hi:.4f}]")
 
-    I0 = [(gap_lo + 0.70 * (gap_hi - gap_lo), gap_lo + 0.85 * (gap_hi - gap_lo))]
-    I1 = [(band_lo + 0.40 * (band_hi - band_lo), band_lo + 0.60 * (band_hi - band_lo))]
-    print(f"    I0 (stop) = {I0}")
-    print(f"    I1 (pass) = {I1}")
+    # Widened windows (user request): I1 starts at theta=0 (constraint D
+    # forces kappa_B(0)=1, T_N(0)=1 for every design regardless -- a
+    # favourable, always-satisfied left edge) and is much wider than the
+    # earlier 0.135-wide sub-window; I0 is centred on theta=1 (comfortably
+    # inside the natural gap [0.676, 1.282]) and, at width 0.4, also much
+    # wider than the earlier ~0.09-wide sub-window. Both still sit strictly
+    # inside their respective natural band/gap.
+    I1 = [(0.0, 0.55)]
+    I0 = [(0.8, 1.2)]
+    # theta=0 is always in the band (constraint D forces kappa_B(0)=1
+    # identically), so I1 starting exactly at 0 is fine even though
+    # find_bands_gaps' own grid-discretized band_lo is a tiny epsilon above
+    # 0, not exactly 0 -- use a small tolerance rather than band_lo itself.
+    assert -1e-6 <= I1[0][0] and I1[0][1] <= band_hi, "I1 must stay inside the natural band"
+    assert gap_lo <= I0[0][0] and I0[0][1] <= gap_hi, "I0 must stay inside the natural gap"
+    print(f"    I0 (stop) = {I0}  (width={I0[0][1] - I0[0][0]}, centred at {(I0[0][0] + I0[0][1]) / 2})")
+    print(f"    I1 (pass) = {I1}  (width={I1[0][1] - I1[0][0]}, starts at {I1[0][0]})")
 
     mu0 = 0.05  # any mu0>0 works (Prop. 5.4a); N does the work of reaching a given depth
     N_values = (1, 3, 5)
