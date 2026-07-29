@@ -177,32 +177,35 @@ def run_all_sanity_checks() -> bool:
     r1, r2 = _print_case("c", alphas_c)
     all_ok &= (r1["passed"] or not r1["expected_to_pass"]) and (r2["passed"] or not r2["expected_to_pass"])
 
-    print("(d) design_direct (n=5, mu0=0.3): should be reliably realizable, unlike the old lifted SDP")
+    print("(d) magnitude-SDP path (n=8, mu0=1.0): should be reliably realizable, unlike the old lifted SDP")
     # design_filter_full's raw output needed reflection/polishing and this
     # case used to be a documented "FAIL (expected)" for exactly that
-    # reason. design_direct never has that problem: forward.a_from_alphas
-    # is realizable by construction (Prop. 4.4), so this checks that the
-    # new primary pipeline's own claim actually holds, not a specific
-    # numeric target (see module docstring re: not validating against the
+    # reason (spec Sec. 9, item 6: "the one that currently fails through
+    # the lifted-SDP pipeline should be re-pointed at the magnitude-SDP
+    # path, where it is expected to pass"). design_sdp_magnitude's feasible
+    # f is realizable by construction via Fejer-Riesz (_factorize_magnitude_f,
+    # manuscript Cor. 4.1) -- no reflection/polish step exists here at all --
+    # so this checks that claim actually holds, not a specific numeric
+    # target (see module docstring re: not validating against the
     # manuscript's own worked-example table values).
     try:
-        from .sdp_design import design_direct
+        from .sdp_design import design_sdp_magnitude, _factorize_magnitude_f
         J0 = [(np.pi / 6, np.pi / 4)]
         J1 = [(np.pi / 2, np.pi)]
-        res = design_direct(5, J0, J1, 0.3)
-        if res.status == "optimal" and res.a is not None:
-            # tol loosened from the default 1e-10: unlike cases (a)-(c),
-            # res.a comes from an SLSQP optimum (ftol=1e-14 target, but
-            # actual convergence is limited to ~1e-7-1e-8), not an exact
-            # algebraic construction.
-            r2 = test_inverse_forward_roundtrip(res.a, tol=1e-6)
+        res = design_sdp_magnitude(8, J0, J1, 1.0)
+        if res.status == "optimal" and res.f is not None:
+            alphas, a, info = _factorize_magnitude_f(res.f)
+            # tol loosened from the default 1e-10: a comes from Fejer-Riesz
+            # root-finding, not an exact closed-form algebraic construction
+            # like cases (a)-(c).
+            r2 = test_inverse_forward_roundtrip(a, tol=1e-6)
             status2 = "PASS" if r2["passed"] else "FAIL (unexpected!)"
             print(f"  [d] inverse->forward: {status2}  (err={r2['error']:.3e}, "
                   f"admissible={r2['admissible']}, min_phase={r2['min_phase']}, "
-                  f"delta={res.delta:.3e}, achieved_mu={res.achieved_mu:.3e})")
+                  f"delta_mag={res.delta_mag:.3e}, factorization_reliable={info.reliable})")
             all_ok &= r2["passed"]
         else:
-            print(f"  [d] SKIPPED: design_direct did not return a usable result (status={res.status})")
+            print(f"  [d] SKIPPED: design_sdp_magnitude did not return a usable result (status={res.status})")
     except Exception as e:  # pragma: no cover - best-effort diagnostic case
         print(f"  [d] SKIPPED: {e!r}")
 
