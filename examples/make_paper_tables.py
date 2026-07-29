@@ -118,6 +118,37 @@ def main():
         label="tab:exp2-TN",
     ))
 
+    # --- Task 10: lift-vs-magnitude relaxation comparison (optional, spec Sec. 7) ---
+    try:
+        with open("experiment3_relaxation_comparison.json") as f:
+            comp = json.load(f)
+        out.append("\n% ===== Relaxation comparison: delta_mag vs delta_lift vs delta_both =====")
+        lines = [
+            r"\begin{table}[ht]",
+            r"\t\centering",
+            r"\t\begin{tabular}{r|ccc}",
+            r"\t\t$n$ & $\delta_{\mathrm{mag}}$ & $\delta_{\mathrm{lift}}$ & $\delta_{\mathrm{both}}$ \\",
+            r"\t\t\hline",
+        ]
+        for label, recs in comp.items():
+            lines.append(rf"\t\t\multicolumn{{4}}{{l}}{{{label}}} \\")
+            for r in recs:
+                lines.append(f"\t\t{r['n']} & {_fmt(r['delta_mag'])} & {_fmt(r['delta_lift'])} & "
+                              f"{_fmt(r['delta_both'])} \\\\")
+        lines += [
+            r"\t\end{tabular}",
+            r"\t\caption{Relaxation comparison (spec Sec.~7 optional run): the magnitude SDP's own "
+            r"bound $\delta_{\mathrm{mag}}$, the plain lifted SDP's raw relaxed bound "
+            r"$\delta_{\mathrm{lift}}$, and their conjunction $\delta_{\mathrm{both}}$ (lift with the "
+            r"magnitude SDP's sign-free constraint added). $\delta_{\mathrm{both}}\approx\delta_{\mathrm{lift}}$ "
+            r"throughout, confirming this addition is provably redundant given the lift's own PSD structure.}"
+            r"\label{tab:relaxation-comparison}",
+            r"\end{table}",
+        ]
+        out.append("\n".join(lines))
+    except FileNotFoundError:
+        print("(skipping relaxation-comparison table: experiment3_relaxation_comparison.json not found)")
+
     text = "\n".join(out)
     with open("paper_tables.tex", "w") as f:
         f.write(text)

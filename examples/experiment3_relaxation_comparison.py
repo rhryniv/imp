@@ -35,10 +35,10 @@ def run_and_report(label, J0, J1, mu0, n_range):
 def main():
     all_records = {}
 
-    # Experiment 1's widened windows (single band)
+    # Experiment 1's current windows (single band)
     I0_e1 = [(0.8, 1.2)]
-    I1_e1 = [(0.0, 0.55)]
-    all_records["experiment1"] = run_and_report("Experiment 1 (widened)", I0_e1, I1_e1, 0.05, (3, 4, 5, 6))
+    I1_e1 = [(0.0, 0.45)]
+    all_records["experiment1"] = run_and_report("Experiment 1", I0_e1, I1_e1, 0.05, (3, 4, 5, 6))
 
     # Experiment 2's multi-band spec (m0=2)
     I0_e2 = [(0.50, 0.65), (2.50, 2.65)]
