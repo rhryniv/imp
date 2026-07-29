@@ -1019,6 +1019,8 @@ class DirectDesignResult:
     achieved_mu: float = 0.0
     winning_start: str | None = None       # which seed in the Phase-2 pool won, for the driver's record
     per_start: dict | None = None          # {seed_name: achieved delta or None}, for the driver's record
+    time_phase1_s: float = 0.0             # summed over every sigma pattern tried, for the driver's record
+    time_phase2_s: float = 0.0             # summed over every sigma pattern tried, for the driver's record
 
 
 def design_direct(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
@@ -1074,18 +1076,22 @@ def design_direct(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: f
     # to work well. Cost is modest in practice: len(J0) is small (<=3 per
     # the manuscript), and only patterns that are Phase-1-feasible at all
     # reach Phase 2.
+    import time as _time
+    time_phase1_s = 0.0
     if not J0:
         feasible_sigmas = [((), None, float("inf"))]
     else:
         sigmas = list(itertools.product((1, -1), repeat=len(J0)))
         feasible_sigmas = []
         for sig in sigmas:
+            _t0 = _time.time()
             alphas_p1, depth = _phase1_open_gap(n, J0, sig, mu0, gamma_bound=gamma_bound,
                                                  n_grid_C=n_grid_C, n_steps=phase1_n_steps)
+            time_phase1_s += _time.time() - _t0
             if depth >= np.cosh(mu0) - 1e-4:  # match _phase1_open_gap's own verify() tolerance
                 feasible_sigmas.append((sig, alphas_p1, depth))
         if not feasible_sigmas:
-            return DirectDesignResult(n=n, mu0=mu0, status="phase1_infeasible")
+            return DirectDesignResult(n=n, mu0=mu0, status="phase1_infeasible", time_phase1_s=time_phase1_s)
 
     rng = np.random.default_rng(seed)
 
@@ -1117,6 +1123,7 @@ def design_direct(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: f
         shared_seeds[f"random_{i}"] = np.clip(0.02 * rng.standard_normal(n), -gamma_bound, gamma_bound)
 
     best_overall = None  # (delta, alphas, sigma, winning_start, per_start)
+    time_phase2_s = 0.0
     for sig, alphas_p1, depth in feasible_sigmas:
         seed_pool = dict(shared_seeds)
         if alphas_p1 is not None:
@@ -1124,9 +1131,11 @@ def design_direct(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: f
         if not seed_pool:
             seed_pool["zero"] = np.zeros(n)
 
+        _t0 = _time.time()
         result, per_start = _phase2_flatten(n, J0, J1, mu0, sig, seed_pool,
                                              gamma_bound=gamma_bound, n_grid_B=n_grid_B, n_grid_C=n_grid_C,
                                              maxiter=maxiter)
+        time_phase2_s += _time.time() - _t0
         if result is None:
             continue
         alphas, delta, winning_start = result
@@ -1134,7 +1143,8 @@ def design_direct(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: f
             best_overall = (delta, alphas, sig, winning_start, per_start)
 
     if best_overall is None:
-        return DirectDesignResult(n=n, mu0=mu0, status="phase2_infeasible")
+        return DirectDesignResult(n=n, mu0=mu0, status="phase2_infeasible",
+                                   time_phase1_s=time_phase1_s, time_phase2_s=time_phase2_s)
 
     delta, alphas, sigma_best, winning_start, per_start = best_overall
     a = a_from_alphas(alphas)
@@ -1150,7 +1160,8 @@ def design_direct(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: f
 
     return DirectDesignResult(n=n, mu0=mu0, status="optimal", sigma=sigma_best, alphas=alphas, a=a,
                                impedances=impedances, delta=delta, achieved_mu=mu_min if J0 else float("inf"),
-                               winning_start=winning_start, per_start=per_start)
+                               winning_start=winning_start, per_start=per_start,
+                               time_phase1_s=time_phase1_s, time_phase2_s=time_phase2_s)
 
 
 @dataclass
