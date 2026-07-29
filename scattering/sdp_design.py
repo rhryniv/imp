@@ -92,7 +92,7 @@ import cvxpy as cp
 from scipy.optimize import minimize
 
 from .poly_sdp import cheb_to_mono_matrix, interval_nonneg_constraints
-from .forward import kappa_B, transmission_TN, q1_abs_sq
+from .forward import kappa_B, transmission_TN, q1_abs_sq, forward_with_grad, grad_free_vars, a_from_alphas
 from .inverse import fejer_riesz, alphas_from_a, ensure_min_phase, check_min_phase
 
 Interval = tuple[float, float]
@@ -716,6 +716,441 @@ def _padded_alpha_seeds(alphas_small: np.ndarray, n_target: int, rng: np.random.
         pos = int(rng.integers(0, n_small + 2))
         variants.append(np.concatenate([alphas_small[:pos], np.zeros(m), alphas_small[pos:]]))
     return variants
+
+
+# --------------------------------------------------------------------------
+# design_direct: the two-phase synthesis algorithm (manuscript Sec. 6.3)
+# --------------------------------------------------------------------------
+#
+# Phase 1 (open the gap) and Phase 2 (flatten the pass band) replace the
+# single-stage search of design_via_layers/design_via_continuation with the
+# manuscript's explicit two-phase structure, using EXACT gradients
+# (forward.forward_with_grad) throughout instead of SLSQP's own internal
+# finite-difference approximation of the constraint Jacobians. delta here
+# IS the epigraph variable t = max(Q-1) directly (manuscript eq. 6.6) --
+# not the old sqrt(u)-1 / (1+delta)^2 bookkeeping (see module docstring).
+
+def _phase1_open_gap(n: int, J0: Sequence[Interval], sigma: tuple, mu0: float,
+                      gamma_bound: float = 0.9995, n_grid_C: int = 200,
+                      n_steps: int = 20, max_bisections: int = 4, maxiter: int = 400):
+    """Phase 1: starting from alpha=0 (Q=1 identically, kappa=cos(n*theta),
+    no gap at all), ramp the REQUIRED depth target from 0 to mu0 in
+    stages, for a GIVEN, fixed sign pattern, with the pass-band condition
+    entirely inactive.
+
+    Read the manuscript's "maximise the gap depth... until d>=cosh(mu0)"
+    as an ascent that STOPS at the threshold, not a genuine unconstrained
+    maximisation: a plain "maximise depth" objective is unbounded above
+    (larger alpha gives larger kappa excursions, with no ceiling except
+    the box bound) -- confirmed empirically, an earlier epigraph-maximise
+    version drove alpha to its bounds and produced delta~1e26, physically
+    meaningless. Each stage is instead a feasibility problem at the
+    current target, regularised by a *small* quadratic pull toward
+    gamma_free=0 (weight tiny relative to the constraint) -- two things
+    were needed together, found in sequence: (1) starting exactly at
+    alpha=0 leaves the constraint gradient exactly zero there (Q-1=|q2|^2
+    has its global minimum, value 0, exactly at alpha=0, so by basic
+    calculus its gradient vanishes there -- and the same degeneracy
+    propagates into d(kappa)/dalpha_j; verified directly: at alpha=0
+    every A_j is diagonal, so the L_j K p^{(j)} gradient formula
+    evaluates to exactly zero). The old design_via_continuation never hit
+    this because it relied on SLSQP's own internal finite-difference
+    Jacobian, which numerically smears that exact zero into a small
+    nonzero estimate and escapes by luck; exact gradients remove that
+    luck, so a tiny fixed perturbation is used as the actual starting
+    point instead. But (2) a perturbed start with a genuinely *flat*
+    objective (tried first) then wanders unboundedly once past the
+    degeneracy, since any feasible point is equally "optimal" with no
+    objective pressure at all -- confirmed empirically (depth ran off to
+    ~1.75e9 against a target of ~1.001). The small regulariser (much
+    weaker than the outright-fighting one from the exact-zero-start
+    attempt, since the starting point is now already displaced) supplies
+    just enough pressure to stop growing once feasible, without being
+    strong enough to prevent reaching feasibility in the first place.
+    Warm-started from the previous stage; the step is halved (up to
+    max_bisections times) if a stage fails to verify -- the same robust
+    ramping pattern already validated in (the now-superseded)
+    design_via_continuation.
+
+    Returns (alphas, achieved_depth) at the last stage successfully
+    reached; achieved_depth may fall short of cosh(mu0) if the schedule
+    stalled completely (feasibility against the target and cross-sigma
+    comparison are design_direct's job).
+    """
+    theta_C = [np.linspace(u, v, n_grid_C) for u, v in J0]
+    bounds = [(-gamma_bound, gamma_bound)] * n
+    reg = 1e-4
+
+    def objective(gamma_free):
+        return reg * float(np.sum(gamma_free ** 2))
+
+    def objective_grad(gamma_free):
+        return 2.0 * reg * gamma_free
+
+    def make_constraints(coshmu_k):
+        constraints = []
+        for th, sig in zip(theta_C, sigma):
+            def fun(gamma_free, th=th, sig=sig):
+                alphas = _free_to_alphas(gamma_free)
+                kap = forward_with_grad(alphas, th)["kappa"]
+                return sig * kap - coshmu_k
+
+            def jac(gamma_free, th=th, sig=sig):
+                alphas = _free_to_alphas(gamma_free)
+                res = forward_with_grad(alphas, th)
+                return grad_free_vars(sig * res["dkappa"]).T
+
+            constraints.append({"type": "ineq", "fun": fun, "jac": jac})
+        return constraints
+
+    def verify(gamma_free, coshmu_k, tol=1e-4):
+        alphas = _free_to_alphas(gamma_free)
+        for th, sig in zip(theta_C, sigma):
+            if np.min(sig * forward_with_grad(alphas, th)["kappa"]) < coshmu_k - tol:
+                return False
+        return True
+
+    def try_stage(gamma_start, mu_k):
+        coshmu_k = np.cosh(mu_k)
+        res = minimize(objective, gamma_start, jac=objective_grad, constraints=make_constraints(coshmu_k),
+                        bounds=bounds, method="SLSQP", options={"maxiter": maxiter, "ftol": 1e-14})
+        if not np.all(np.isfinite(res.x)):
+            return None
+        return res.x if verify(res.x, coshmu_k) else None
+
+    def depth_of(gamma_free):
+        alphas = _free_to_alphas(gamma_free)
+        return min(np.min(sig * forward_with_grad(alphas, th)["kappa"]) for th, sig in zip(theta_C, sigma))
+
+    def one_attempt(gamma0):
+        # Try the FULL target directly first, in one SLSQP solve --
+        # confirmed empirically to work reliably from a small perturbation.
+        # Counter-intuitively, ramping in *small* steps starting right next
+        # to the degenerate point is *harder* to converge precisely (SLSQP
+        # repeatedly hit its iteration limit chasing tiny early targets like
+        # cosh(mu0/n_steps), converging to within 2e-5 of feasible and no
+        # closer even at 2000 iterations, while the full target converged
+        # cleanly in under 400) -- conditioning right next to alpha=0 is
+        # worse for a small ask than a moderate one, so ramping is used
+        # only as a fallback, not the default path.
+        direct = try_stage(gamma0, mu0)
+        if direct is not None:
+            return direct, depth_of(direct)
+
+        gamma_free = gamma0
+        mu_prev = 0.0
+        schedule = list(np.linspace(0.0, mu0, n_steps + 1)[1:]) if n_steps > 0 else [mu0]
+        idx = 0
+        while idx < len(schedule):
+            mu_target = schedule[idx]
+            lo, hi = mu_prev, mu_target
+            outcome = try_stage(gamma_free, hi)
+            bisections = 0
+            while outcome is None and bisections < max_bisections:
+                hi = (lo + hi) / 2.0
+                outcome = try_stage(gamma_free, hi)
+                bisections += 1
+            if outcome is None:
+                break
+            gamma_free, mu_prev = outcome, hi
+            if hi >= mu_target - 1e-12:
+                idx += 1
+        return gamma_free, depth_of(gamma_free)
+
+    # Q-1=|q2|^2 >= 0 has its global minimum (value 0) exactly at alpha=0,
+    # so d(kappa)/dalpha_j is *exactly* zero there too (verified: at
+    # alpha=0 every A_j is diagonal, so the L_j K p^{(j)} gradient formula
+    # evaluates to exactly zero) -- a genuine degeneracy, not a bug. The
+    # earlier design_via_continuation never hit this because it relied on
+    # SLSQP's own internal finite-difference Jacobian, which numerically
+    # smears that exact zero into a small nonzero estimate and escapes by
+    # luck; exact analytic gradients remove that luck, so SLSQP gets stuck
+    # exactly at the (infeasible) starting point when seeded there. Start
+    # from a small perturbation instead -- any nonzero point escapes the
+    # degeneracy, since it is confined to the single point alpha=0.
+    #
+    # A single fixed perturbation isn't always enough, though (confirmed:
+    # the manuscript's own worked example, n=5/mu0=1.0 -- a substantially
+    # larger depth target than the mu0=0.05 cases this was first tuned on
+    # -- stalled partway for its one reachable sign pattern, short of the
+    # target even with a long ramp schedule). Try several perturbation
+    # scales/seeds and keep whichever reaches the largest depth.
+    rng = np.random.default_rng(0)
+    best = None
+    for scale in (1e-3, 1e-2, 0.05, 0.1, 0.2):
+        gamma0 = rng.normal(0.0, scale, n)
+        gamma_result, depth = one_attempt(gamma0)
+        if best is None or depth > best[1]:
+            best = (gamma_result, depth)
+        if depth >= np.cosh(mu0) - 1e-6:
+            break  # already reached the target, no need to try further scales
+
+    gamma_free, depth = best
+    return _free_to_alphas(gamma_free), depth
+
+
+def _phase2_flatten(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float, sigma: tuple,
+                     seed_pool: dict[str, np.ndarray], gamma_bound: float = 0.9995,
+                     n_grid_B: int = 200, n_grid_C: int = 200, maxiter: int = 400):
+    """Phase 2 (manuscript eq. direct): from the Phase-1 point and the rest
+    of the seed pool, solve
+        min_{alpha,t} t   s.t.  Q(theta)-1 <= t          (theta in I1),
+                              sigma_j*kappa(theta) >= cosh(mu0)  (theta in I0)
+    by SQP with exact gradients. t IS delta directly.
+
+    Grid discretisation is harmless here (unlike the SDP): (A) and (D)
+    hold identically in the alpha-chart (forward_reconstruct/
+    forward_with_grad), so sampling can only cost margin in (B)/(C), never
+    realizability -- see certify() for the grid-independent final numbers.
+
+    Run once per named seed in seed_pool ({name: gamma0}); returns
+    (alphas, delta, per_start) with per_start = {name: achieved delta or
+    None}, computed from this single pass -- NOT a separate diagnostic
+    re-run (an earlier version re-solved every seed a second time purely
+    to populate per_start, roughly doubling total runtime for no benefit).
+    """
+    theta_B = [np.linspace(g, d, n_grid_B) for g, d in J1]
+    theta_C = [np.linspace(u, v, n_grid_C) for u, v in J0]
+    coshmu0 = np.cosh(mu0)
+
+    def objective(x):
+        return x[-1]
+
+    def objective_grad(x):
+        g = np.zeros(len(x))
+        g[-1] = 1.0
+        return g
+
+    constraints = []
+    for th in theta_B:
+        def fun(x, th=th):
+            alphas = _free_to_alphas(x[:-1])
+            Q = forward_with_grad(alphas, th)["Q"]
+            return x[-1] - (Q - 1.0)
+
+        def jac(x, th=th):
+            alphas = _free_to_alphas(x[:-1])
+            res = forward_with_grad(alphas, th)
+            dQ_free = grad_free_vars(res["dQ"])
+            Jm = np.zeros((len(th), len(x)))
+            Jm[:, :-1] = -dQ_free.T
+            Jm[:, -1] = 1.0
+            return Jm
+
+        constraints.append({"type": "ineq", "fun": fun, "jac": jac})
+
+    for th, sig in zip(theta_C, sigma):
+        def fun(x, th=th, sig=sig):
+            alphas = _free_to_alphas(x[:-1])
+            kap = forward_with_grad(alphas, th)["kappa"]
+            return sig * kap - coshmu0
+
+        def jac(x, th=th, sig=sig):
+            alphas = _free_to_alphas(x[:-1])
+            res = forward_with_grad(alphas, th)
+            dkap_free = grad_free_vars(sig * res["dkappa"])
+            Jm = np.zeros((len(th), len(x)))
+            Jm[:, :-1] = dkap_free.T
+            return Jm
+
+        constraints.append({"type": "ineq", "fun": fun, "jac": jac})
+
+    bounds = [(-gamma_bound, gamma_bound)] * n + [(0.0, None)]
+
+    def verify(gamma_free, t, tol=1e-6):
+        # A genuinely useful filter has delta bounded by a modest constant
+        # (the manuscript's own worked examples: 1e-5 to a handful of
+        # units, never remotely close to this). SLSQP occasionally
+        # converges a badly-scaled seed to a "locally stationary" point
+        # that technically satisfies the pointwise inequalities on the
+        # grid with an enormous t -- confirmed empirically (delta~4.7e4
+        # from a seed pool where every other member failed outright).
+        # Reject rather than report as a successful design.
+        if t > 100.0:
+            return False
+        alphas = _free_to_alphas(gamma_free)
+        for th in theta_B:
+            Q = forward_with_grad(alphas, th)["Q"]
+            if np.max(Q - 1.0) > t + tol:
+                return False
+        for th, sig in zip(theta_C, sigma):
+            kap = forward_with_grad(alphas, th)["kappa"]
+            if np.min(sig * kap) < coshmu0 - tol:
+                return False
+        return True
+
+    best = None
+    per_start: dict[str, float | None] = {}
+    for name, gamma0 in seed_pool.items():
+        gamma0 = np.clip(np.asarray(gamma0, dtype=float), -gamma_bound, gamma_bound)
+        alphas0 = _free_to_alphas(gamma0)
+        Qmax0 = max((np.max(forward_with_grad(alphas0, th)["Q"]) for th in theta_B), default=1.0)
+        t0 = max(0.0, Qmax0 - 1.0)
+        x0 = np.concatenate([gamma0, [t0]])
+        res = minimize(objective, x0, jac=objective_grad, constraints=constraints, bounds=bounds,
+                        method="SLSQP", options={"maxiter": maxiter, "ftol": 1e-14})
+        if not np.all(np.isfinite(res.x)):
+            per_start[name] = None
+            continue
+        gamma_try, t_try = res.x[:-1], float(res.x[-1])
+        if verify(gamma_try, t_try):
+            per_start[name] = t_try
+            if best is None or t_try < best[1]:
+                best = (gamma_try, t_try, name)
+        else:
+            per_start[name] = None
+
+    if best is None:
+        return None, per_start
+    gamma_free, delta, winning_name = best
+    return (_free_to_alphas(gamma_free), delta, winning_name), per_start
+
+
+@dataclass
+class DirectDesignResult:
+    n: int
+    mu0: float
+    status: str                            # "optimal" / "phase1_infeasible" / "phase2_infeasible"
+    sigma: tuple | None = None
+    alphas: np.ndarray | None = None
+    a: np.ndarray | None = None
+    impedances: np.ndarray | None = None
+    delta: float | None = None             # = max_{I1}(Q-1), directly (manuscript eq. 6.6)
+    achieved_mu: float = 0.0
+    winning_start: str | None = None       # which seed in the Phase-2 pool won, for the driver's record
+    per_start: dict | None = None          # {seed_name: achieved delta or None}, for the driver's record
+
+
+def design_direct(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
+                   smaller_solutions: dict[int, np.ndarray] | None = None,
+                   magnitude_sdp_result: "MagnitudeSDPResult | None" = None,
+                   n_pad_variants: int = 4, n_random_draws: int = 3,
+                   gamma_bound: float = 0.9995, n_grid_B: int = 200, n_grid_C: int = 200,
+                   phase1_n_steps: int = 20, seed: int = 0, maxiter: int = 400) -> DirectDesignResult:
+    """The two-phase synthesis algorithm (manuscript Sec. 6.3): Phase 1
+    opens the gap (all 2^len(J0) sign patterns tried; every pattern that
+    clears the target depth goes on to Phase 2, not just the single
+    largest-margin one -- see below), Phase 2 flattens the pass band from
+    a multi-seed pool. Every returned design is realisable by construction
+    (forward_reconstruct's SU(1,1) identity / Prop. 4.4), so -- unlike
+    design_filter_full -- there is no admissible-but-unrealisable middle
+    case to report.
+
+    Known limitation, inherited from the manuscript's own algorithm, not
+    an implementation bug: Phase 1 is a continuation/ramp from alpha=0,
+    so it can only ever reach whichever sign pattern kappa=cos(n*theta)
+    naturally has at each J0 component's location at that starting point
+    -- confirmed directly (n=9, a two-stop-band/two-pass-band case tested
+    extensively elsewhere in this project): sigma=(1,1) is known
+    achievable (found previously by pure random-restart search, unrelated
+    to alpha=0), but Phase 1 here reaches depth=-0.87 for it regardless of
+    ramp schedule length, because the *first*, tiniest ramp target already
+    fails from the (tiny, near-zero) starting perturbation and bisection
+    cannot recover -- a genuinely unreachable *basin*, not a search-effort
+    problem. This is the same limitation the now-superseded
+    design_via_continuation had; the manuscript's Phase 1 does not solve
+    it, since it is explicitly continuation-based ("starting from the
+    trivial structure alpha=0").
+
+    Seed pool for Phase 2 (manuscript's own prescription -- do NOT seed
+    from the lifted SDP, it violates (A) and is not a block):
+      1. the winning Phase-1 solution;
+      2. the magnitude-SDP factorisation, if magnitude_sdp_result is given
+         and its seed gap quality is not hopeless (see _seed_gap_quality);
+      3. zero-padded embeddings of designs already found at smaller n'
+         (smaller_solutions = {n_small: alphas});
+      4. a small number of random draws around the Phase-1 point.
+    """
+    # Try Phase 2 for EVERY sigma pattern that cleared Phase 1's threshold,
+    # not just the single largest-margin one. The manuscript's own wording
+    # ("the one giving the largest margin is fixed") suggests a single
+    # greedy pick, but that heuristic proved unreliable in practice: it is
+    # sensitive to Phase 1's own tuning (grid size, ramp schedule), and a
+    # margin-maximising sigma is not guaranteed to be the one Phase 2 can
+    # actually flatten a good pass band from -- confirmed empirically,
+    # tightening Phase 1's grid changed which sigma "won" for a case with
+    # a previously-known-good answer, and the new winner failed Phase 2
+    # entirely while the old winner (a smaller-margin pattern) was known
+    # to work well. Cost is modest in practice: len(J0) is small (<=3 per
+    # the manuscript), and only patterns that are Phase-1-feasible at all
+    # reach Phase 2.
+    if not J0:
+        feasible_sigmas = [((), None, float("inf"))]
+    else:
+        sigmas = list(itertools.product((1, -1), repeat=len(J0)))
+        feasible_sigmas = []
+        for sig in sigmas:
+            alphas_p1, depth = _phase1_open_gap(n, J0, sig, mu0, gamma_bound=gamma_bound,
+                                                 n_grid_C=n_grid_C, n_steps=phase1_n_steps)
+            if depth >= np.cosh(mu0) - 1e-4:  # match _phase1_open_gap's own verify() tolerance
+                feasible_sigmas.append((sig, alphas_p1, depth))
+        if not feasible_sigmas:
+            return DirectDesignResult(n=n, mu0=mu0, status="phase1_infeasible")
+
+    rng = np.random.default_rng(seed)
+
+    # Seeds that don't depend on sigma, shared across every Phase-2 attempt.
+    shared_seeds: dict[str, np.ndarray] = {}
+    if magnitude_sdp_result is not None and magnitude_sdp_result.f is not None:
+        try:
+            alphas_sdp, a_sdp, info = _factorize_magnitude_f(magnitude_sdp_result.f)
+            gap_q = _seed_gap_quality(a_sdp, J0)
+            if info.reliable and gap_q > 1.0 + 1e-6:
+                shared_seeds["sdp_seed"] = np.tanh(alphas_sdp[:n])
+        except Exception:
+            pass
+    if smaller_solutions:
+        for n_small, alphas_small in smaller_solutions.items():
+            if n_small >= n:
+                continue
+            for i, padded in enumerate(_padded_alpha_seeds(np.asarray(alphas_small, dtype=float),
+                                                             n, rng, max_variants=n_pad_variants)):
+                shared_seeds[f"zero_pad_from_n{n_small}_{i}"] = np.tanh(padded[:n])
+    # Small random draws near the *trivial* point (alpha=0), not around
+    # phase1's own solution: phase1's gamma can already sit close to the
+    # +-1 boundary (arctanh blows up there), and perturbing it further
+    # with the naive scale tried first (0.1) occasionally pushed a
+    # component past the boundary before clipping, producing a huge
+    # arctanh(alpha) and a wildly infeasible-looking seed (confirmed
+    # empirically: one such draw reported delta~2.3e6 after "succeeding").
+    for i in range(n_random_draws):
+        shared_seeds[f"random_{i}"] = np.clip(0.02 * rng.standard_normal(n), -gamma_bound, gamma_bound)
+
+    best_overall = None  # (delta, alphas, sigma, winning_start, per_start)
+    for sig, alphas_p1, depth in feasible_sigmas:
+        seed_pool = dict(shared_seeds)
+        if alphas_p1 is not None:
+            seed_pool["phase1"] = np.tanh(alphas_p1[:n])
+        if not seed_pool:
+            seed_pool["zero"] = np.zeros(n)
+
+        result, per_start = _phase2_flatten(n, J0, J1, mu0, sig, seed_pool,
+                                             gamma_bound=gamma_bound, n_grid_B=n_grid_B, n_grid_C=n_grid_C,
+                                             maxiter=maxiter)
+        if result is None:
+            continue
+        alphas, delta, winning_start = result
+        if best_overall is None or delta < best_overall[0]:
+            best_overall = (delta, alphas, sig, winning_start, per_start)
+
+    if best_overall is None:
+        return DirectDesignResult(n=n, mu0=mu0, status="phase2_infeasible")
+
+    delta, alphas, sigma_best, winning_start, per_start = best_overall
+    a = a_from_alphas(alphas)
+    impedances = np.empty(n + 2)
+    impedances[0] = 1.0
+    for j, alpha_j in enumerate(alphas):
+        impedances[j + 1] = impedances[j] * np.exp(alpha_j)
+
+    mu_min = np.inf
+    for (u, v), s in zip(J0, sigma_best):
+        kap = s * kappa_B(a, np.linspace(u, v, 4000))
+        mu_min = min(mu_min, np.arccosh(max(float(np.min(kap)), 1.0)))
+
+    return DirectDesignResult(n=n, mu0=mu0, status="optimal", sigma=sigma_best, alphas=alphas, a=a,
+                               impedances=impedances, delta=delta, achieved_mu=mu_min if J0 else float("inf"),
+                               winning_start=winning_start, per_start=per_start)
 
 
 @dataclass
