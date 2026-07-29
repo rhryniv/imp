@@ -85,7 +85,7 @@ def main():
     res_level2 = design_via_layers(n_fixed, I0, I1, mu0, warm_start_alphas=alphas_sdp,
                                     use_sdp_warm_start=False, use_continuation_seed=False,
                                     n_restarts=5, seed=0)
-    print(f"  Level 2 result: status={res_level2.status} delta1={res_level2.delta1:.4e} "
+    print(f"  Level 2 result: status={res_level2.status} delta={res_level2.delta:.4e} "
           f"sigma={res_level2.sigma} achieved_mu={res_level2.achieved_mu:.4f}")
 
     # --- Level 3: full algorithm, degree-scanned ---
@@ -102,11 +102,11 @@ def main():
             continue
         level3_results[n] = res
         smaller_solutions[n] = res.alphas
-        print(f"  n={n}: delta_SDP={lb:.4e}  delta_achieved={res.delta1:.4e}  sigma={res.sigma}")
+        print(f"  n={n}: delta_SDP={lb:.4e}  delta_achieved={res.delta:.4e}  sigma={res.sigma}")
 
-    n_best = min(level3_results, key=lambda n: level3_results[n].delta1)
+    n_best = min(level3_results, key=lambda n: level3_results[n].delta)
     res_level3 = level3_results[n_best]
-    print(f"\n  Best: n={n_best}, delta1={res_level3.delta1:.4e}")
+    print(f"\n  Best: n={n_best}, delta={res_level3.delta:.4e}")
 
     # --- Table A: T_N comparison across the three levels ---
     print("\n--- Table A: T_N across levels ---")
@@ -135,15 +135,15 @@ def main():
     # precision -- exactly the good-design regime the scan is looking for.
     print("\n--- Table B: SDP relaxation lower bound vs. achieved delta ---")
     print(f"{'n':>3} {'delta_SDP (lower bound)':>24} {'delta_achieved':>16} {'gap':>12}  note")
-    gap_n3 = res_level2.delta1 - delta_sdp_n3
+    gap_n3 = res_level2.delta - delta_sdp_n3
     flag_n3 = "" if gap_n3 >= 0 else "  <- solver precision floor, see caveat below"
-    print(f"{n_fixed:>3} {delta_sdp_n3:>24.4e} {res_level2.delta1:>16.4e} "
+    print(f"{n_fixed:>3} {delta_sdp_n3:>24.4e} {res_level2.delta:>16.4e} "
           f"{gap_n3:>12.4e}  (Level 2){flag_n3}")
     any_negative = gap_n3 < 0
     for n in n_range:
         if n not in level3_results:
             continue
-        d = level3_results[n].delta1
+        d = level3_results[n].delta
         gap = d - sdp_bounds[n]
         flag = "" if gap >= 0 else "  <- solver precision floor, see caveat below"
         any_negative = any_negative or gap < 0

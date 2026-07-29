@@ -61,7 +61,7 @@ _cheb_from_cosine_series, applied consistently in design_sdp_magnitude and
 
 IMPORTANT, found empirically (see commit history / prior analysis): for
 *any* J0, J1, the unconstrained (A)+(B)+(D) problem's global optimum is
-always the trivial filter a=(1,0,...,0) (u=1, delta1=0, zero stop-band
+always the trivial filter a=(1,0,...,0) (u=1, delta=0, zero stop-band
 attenuation), because nothing in that problem penalizes doing nothing. So
 design_filter's post-hoc check of (C) essentially always fails in
 practice, and degree_scan/full_pipeline fall back to design_filter_full.
@@ -297,8 +297,8 @@ class DesignResult:
     status: str
     c: np.ndarray | None = None            # autocorrelation coeffs of G, length n+1
     a: np.ndarray | None = None            # a Fejer-Riesz factor of c (min-phase)
-    u: float | None = None                 # = (1+delta1)^2
-    delta1: float | None = None
+    u: float | None = None                 # = 1 + delta (constraint B: Q <= u on I1)
+    delta: float | None = None             # = max_{I1}(Q-1) directly (manuscript eq. 6.6), NOT sqrt(u)-1
     C_satisfied: bool = False              # post-hoc check of constraint (C), any sign pattern
     achieved_mu: float = 0.0               # min_{J0} arccosh(|kappa_B|), 0 if C fails somewhere
     problem: cp.Problem | None = None
@@ -336,7 +336,7 @@ def design_filter(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: f
 
     result.c = c.value
     result.u = float(u.value)
-    result.delta1 = float(np.sqrt(max(result.u, 0.0)) - 1.0)
+    result.delta = float(max(result.u - 1.0, 0.0))  # u IS max_{I1}(Q) at optimality (B tight)
     result.a = fejer_riesz(result.c)
     result.a *= np.sign(np.sum(result.a)) or 1.0  # constraint D wants sum(a)=+1
 
@@ -378,7 +378,7 @@ class FullDesignResult:
     a_raw: np.ndarray | None = None        # raw relaxed SDP solution, before polishing
     A: np.ndarray | None = None
     u: float | None = None
-    delta1: float | None = None
+    delta: float | None = None             # = max_{I1}(Q-1) directly (manuscript eq. 6.6), NOT sqrt(u)-1
     tightness_ratio: float | None = None
     polish_verified: bool | None = None    # did the polish actually reach a feasible point?
     min_phase: bool | None = None          # is .a already realizable (Thm 4.6), no reflection needed?
@@ -571,7 +571,7 @@ def _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs):
         a_pol, u_pol, verified = _polish(result.a_raw, J0, J1, mu0, sigma)
         result.a = a_pol
         result.u = u_pol
-        result.delta1 = float(np.sqrt(max(u_pol, 0.0)) - 1.0)
+        result.delta = float(max(u_pol - 1.0, 0.0))
         result.polish_verified = verified
         result.min_phase = check_min_phase(a_pol)[0]
     return result
@@ -586,7 +586,7 @@ def design_filter_full(n: int, J0: Sequence[Interval], J1: Sequence[Interval], m
     if sigma is not None:
         return _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs)
     # Prefer verified + already-realizable (min-phase) results over merely
-    # verified ones: a smaller delta1 that turns out unrealizable is not
+    # verified ones: a smaller delta that turns out unrealizable is not
     # actually better once you account for what reflecting onto the
     # realizable branch does to constraint (C) (see inverse.ensure_min_phase
     # / sdp_design._polish's re-polish-from-reflection step).
@@ -631,7 +631,7 @@ def sdp_lower_bound(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0:
                 best_u = u_lb
     if best_u is None:
         return None
-    return float(np.sqrt(max(best_u, 0.0)) - 1.0)
+    return float(max(best_u - 1.0, 0.0))
 
 
 # --------------------------------------------------------------------------
@@ -1163,7 +1163,7 @@ class LayerDesignResult:
     a: np.ndarray | None = None            # = forward.a_from_alphas(alphas): realizable by construction
     impedances: np.ndarray | None = None
     u: float | None = None
-    delta1: float | None = None
+    delta: float | None = None             # = max_{I1}(Q-1) directly (manuscript eq. 6.6), NOT sqrt(u)-1
     verified: bool | None = None           # True iff (B)/(C) hold pointwise on a fine grid
     achieved_mu: float = 0.0
 
@@ -1194,7 +1194,7 @@ def _solve_layers_for_sigma(n, J0, J1, mu0, sigma, gamma_bound, n_grid_B, n_grid
     patterns into one run (auto-detecting sign per seed instead) was also
     tried, but under-samples whichever pattern isn't naturally favoured by
     the seeds -- confirmed empirically to regress a known-hard case (n=9 on
-    the multiband config) from delta1=0.065 to 0.36. Per-pattern enumeration
+    the multiband config) from delta=0.065 to 0.36. Per-pattern enumeration
     is still fully automatic from the caller's side (see design_via_layers),
     just not collapsed into a single pooled solve."""
     from .forward import a_from_alphas
@@ -1338,14 +1338,14 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
         result = _solve_layers_for_sigma(n, J0, J1, mu0, sig, gamma_bound, n_grid_B, n_grid_C, seeds)
         if result is not None:
             alphas, a, u = result
-            delta1 = float(np.sqrt(max(u, 0.0)) - 1.0)
-            if best_overall is None or delta1 < best_overall[0]:
-                best_overall = (delta1, sig, alphas, a, u)
+            delta = float(max(u - 1.0, 0.0))
+            if best_overall is None or delta < best_overall[0]:
+                best_overall = (delta, sig, alphas, a, u)
 
     if best_overall is None:
         return LayerDesignResult(n=n, mu0=mu0, status="infeasible")
 
-    delta1, sig, alphas, a, u = best_overall
+    delta, sig, alphas, a, u = best_overall
     impedances = np.empty(n + 2)
     impedances[0] = 1.0
     for j, alpha_j in enumerate(alphas):
@@ -1357,7 +1357,7 @@ def design_via_layers(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu
         mu_min = min(mu_min, np.arccosh(max(float(np.min(kap)), 1.0)))
 
     return LayerDesignResult(n=n, mu0=mu0, status="optimal", sigma=sig, alphas=alphas, a=a,
-                              impedances=impedances, u=u, delta1=delta1, verified=True,
+                              impedances=impedances, u=u, delta=delta, verified=True,
                               achieved_mu=mu_min if J0 else float("inf"))
 
 
@@ -1503,7 +1503,7 @@ def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interva
 
     alphas = _free_to_alphas(gamma_free)
     a = a_of(gamma_free)
-    delta1 = float(np.sqrt(max(u_prev, 0.0)) - 1.0)
+    delta = float(max(u_prev - 1.0, 0.0))
     status = "optimal" if mu_prev >= mu0 - 1e-9 else "partial"
 
     impedances = np.empty(n + 2)
@@ -1519,7 +1519,7 @@ def design_via_continuation(n: int, J0: Sequence[Interval], J1: Sequence[Interva
         mu_min = min(mu_min, np.arccosh(max(float(np.min(kap)), 1.0)))
 
     return LayerDesignResult(n=n, mu0=mu0, status=status, sigma=sig, alphas=alphas, a=a,
-                              impedances=impedances, u=u_prev, delta1=delta1,
+                              impedances=impedances, u=u_prev, delta=delta,
                               verified=(status == "optimal"),
                               achieved_mu=mu_min if J0 else float("inf"))
 

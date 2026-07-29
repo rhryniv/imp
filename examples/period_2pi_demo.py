@@ -77,7 +77,7 @@ def main():
         results[n] = res
         smaller_solutions[n] = res.alphas
 
-        print(f"\nn={n}: delta1={res.delta1:.4e}  sigma={res.sigma}  "
+        print(f"\nn={n}: delta={res.delta:.4e}  sigma={res.sigma}  "
               f"achieved_mu={res.achieved_mu:.4f} (target {mu0})")
         print(f"  alphas = {np.round(res.alphas, 4)}  (sum={np.sum(res.alphas):.2e})")
         print(f"  impedances p_0..p_{n + 1} = {np.round(res.impedances, 4)}")

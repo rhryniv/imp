@@ -7,7 +7,7 @@ I0/I1 configuration -- two disjoint stop bands, two disjoint pass bands -- is
 *not* hard to optimize in general (n=7 already does well), but n=9
 specifically is a genuine dead zone for it: two independent, unrelated search
 strategies (continuation tried over all sign patterns, and a 40-restart random
-search) both converged to the *same* delta1=0.0649, strong evidence that's
+search) both converged to the *same* delta=0.0649, strong evidence that's
 really the best n=9 can do here, not a search failure. n=11 and n=13, by
 contrast, both nail the original two-piece I1 = [(1.20,1.40), (1.80,2.00)]
 almost perfectly.
@@ -31,8 +31,8 @@ guard-band experiment (widening I0/I1 by an unmotivated margin, which
 consistently made things *worse* -- see the module docstring history in
 sdp_design.py / the multiband_demo.py investigation), this widening costs
 essentially nothing at the degrees that were already good: n=13 with the wide
-I1 is *better* than with the split I1 (delta1 1.8e-5 vs 2.5e-5), and n=17
-reaches delta1=4.0e-6, essentially perfect, with min T_N over the *entire*
+I1 is *better* than with the split I1 (delta 1.8e-5 vs 2.5e-5), and n=17
+reaches delta=4.0e-6, essentially perfect, with min T_N over the *entire*
 wide pass band at 0.9999. The difference from the guard-band case is that
 here there was direct empirical evidence the wider region was already nearly
 free, rather than an unmotivated ask.
@@ -70,7 +70,7 @@ def main():
             continue
         results[n] = res
 
-        print(f"\nn={n}: delta1={res.delta1:.4e}  sigma={res.sigma}  "
+        print(f"\nn={n}: delta={res.delta:.4e}  sigma={res.sigma}  "
               f"achieved_mu={res.achieved_mu:.4f} (target {mu0})")
         print(f"  alphas = {np.round(res.alphas, 4)}  (sum={np.sum(res.alphas):.2e})")
         print(f"  impedances p_0..p_{n + 1} = {np.round(res.impedances, 4)}")
@@ -96,7 +96,7 @@ def main():
         if n not in results:
             continue
         res = results[n]
-        print(f"\nPlotting n={n} (delta1={res.delta1:.4e}) ...")
+        print(f"\nPlotting n={n} (delta={res.delta:.4e}) ...")
         plot_filter(res.a, N_values, I0=I0, I1=I1, savepath=f"multiband_n{n}_wide_continuation.png")
         print(f"  saved multiband_n{n}_wide_continuation.png")
 

@@ -71,7 +71,7 @@ def main():
         results[n] = res
         smaller_solutions[n] = res.alphas
 
-        print(f"\nn={n}: delta1={res.delta1:.4e}  sigma={res.sigma}  "
+        print(f"\nn={n}: delta={res.delta:.4e}  sigma={res.sigma}  "
               f"achieved_mu={res.achieved_mu:.4f} (target {mu0})")
         print(f"  alphas = {np.round(res.alphas, 4)}  (sum={np.sum(res.alphas):.2e})")
         print(f"  impedances p_0..p_{n + 1} = {np.round(res.impedances, 4)}")
@@ -80,15 +80,15 @@ def main():
             tn_pass = _extreme_TN(res.a, I1, N, "min")
             print(f"  N={N:3d}:  max T_N over I0 = {tn_stop:.3e}   min T_N over I1 = {tn_pass:.5f}")
 
-    # --- Plot the best-performing design (smallest delta1), not just the
+    # --- Plot the best-performing design (smallest delta), not just the
     # largest n that happened to converge: local search quality is not
     # guaranteed monotonic in n (confirmed in this exact run -- n=9 landed
     # in a worse basin than n=7), so "largest n" and "best design" can
     # differ, and silently plotting the former would be misleading.
     if results:
-        n_best = min(results, key=lambda n: results[n].delta1)
+        n_best = min(results, key=lambda n: results[n].delta)
         res_best = results[n_best]
-        print(f"\nPlotting best-performing design (n={n_best}, delta1={res_best.delta1:.4e}) ...")
+        print(f"\nPlotting best-performing design (n={n_best}, delta={res_best.delta:.4e}) ...")
         plot_filter(res_best.a, N_values, I0=I0, I1=I1, savepath=f"multiband_n{n_best}.png")
         print(f"  saved multiband_n{n_best}.png")
     else:
