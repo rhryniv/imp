@@ -43,21 +43,32 @@ Three SDP-adjacent tools are implemented:
                           practice -- its raw output is only a warm start,
                           refined by a local polish before being returned.
 
-BUG FOUND AND FIXED (this refactor): design_filter and design_filter_full's
-_autocorr_from_A fed the *undoubled* autocorrelation f_l straight into
-interval_nonneg_constraints, silently treating Q's "f_0 + 2*sum f_l cos"
-expansion as if it were the unscaled Chebyshev expansion "sum c_l T_l(x)".
-Verified numerically on a concrete test vector: the resulting constraint
-differs from the true Q by 0.35 (not a rounding artifact). This plausibly
-root-causes the "(A) is violated 100% of the time" empirical finding below
--- the SDP was optimizing a different, incorrect problem the whole time.
-forward.py itself was never affected (q1_abs_sq evaluates |sum a_m e^{im
-theta}|^2 directly, no coefficient-doubling step exists to get wrong), so
-every *achieved* design from design_via_layers/design_via_continuation
-reported prior to this fix remains valid; only the SDP relaxations'
-own bound/warm-start quality was compromised. Fixed via
-_cheb_from_cosine_series, applied consistently in design_sdp_magnitude and
-(where the lifted SDP is kept as an optional comparison) design_filter_full.
+BUG FOUND AND FIXED (this refactor, in two stages): design_filter and
+design_filter_full's _autocorr_from_A fed the *undoubled* autocorrelation
+f_l straight into interval_nonneg_constraints, silently treating Q's
+"f_0 + 2*sum f_l cos" expansion as if it were the unscaled Chebyshev
+expansion "sum c_l T_l(x)". Verified numerically on a concrete test
+vector: the resulting constraint differs from the true Q by 0.35 (not a
+rounding artifact). This plausibly root-causes the "(A) is violated 100%
+of the time" empirical finding below -- the SDP was optimizing a
+different, incorrect problem the whole time. forward.py itself was never
+affected (q1_abs_sq evaluates |sum a_m e^{im theta}|^2 directly, no
+coefficient-doubling step exists to get wrong), so every *achieved*
+design from design_via_layers/design_via_continuation reported prior to
+this fix remains valid; only the SDP relaxations' own bound/warm-start
+quality was compromised. Fixed via _cheb_from_cosine_series, first
+applied only in design_sdp_magnitude -- a follow-up audit (prompted by
+building the lift/magnitude "conjunction" comparison, Sec. 7 of the
+spec, which needs design_filter_full's *raw* relaxed value to be
+trustworthy) found the fix had NOT actually been carried over to
+design_filter/design_filter_full despite this docstring's earlier claim
+that it had; _cheb_from_cosine_series is now applied there too. This
+means sdp_lower_bound's returned value was not a valid lower bound
+before this second fix (it read off the same mis-scaled raw SDP
+objective) -- design_filter_full's *polished* .a/.delta were never
+affected, since _polish always re-verifies against the true pointwise
+Q/kappa_B formulas regardless of the raw relaxation's own internal
+scaling.
 
 IMPORTANT, found empirically (see commit history / prior analysis): for
 *any* J0, J1, the unconstrained (A)+(B)+(D) problem's global optimum is
@@ -309,8 +320,15 @@ class DesignResult:
 def design_filter(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: float,
                    solver: str = "CLARABEL", **solver_kwargs) -> DesignResult:
     """Autocorrelation-domain SDP: minimize u s.t. G>=1 on [-1,1], G<=u on J1,
-    sum(c)=1 (constraint D, since G(1)=sum(c_l) and D requires q~_1(0)=1).
-    Constraint (C) is checked post hoc on the Fejer-Riesz factor of c."""
+    G(0)=1 (constraint D, since G(0)=q~_1(0)^2 and D requires q~_1(0)=1).
+    Constraint (C) is checked post hoc on the Fejer-Riesz factor of c.
+
+    c is the RAW (undoubled) autocorrelation, G(theta) = c_0 + 2*sum_{l>=1}
+    c_l cos(l*theta) -- same convention as design_sdp_magnitude's own f, and
+    what inverse.fejer_riesz itself expects (see this module's docstring's
+    "BUG FOUND AND FIXED" note: c must be rescaled via
+    _cheb_from_cosine_series before poly_sdp's Chebyshev-basis machinery,
+    which has no notion of the factor of 2, ever sees it)."""
     if n < 1:
         raise ValueError("n must be >= 1")
     T = cheb_to_mono_matrix(n)
@@ -318,13 +336,14 @@ def design_filter(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: f
     u = cp.Variable()
     e0 = np.zeros(n + 1)
     e0[0] = 1.0
+    scale = np.concatenate([[1.0], 2.0 * np.ones(n)])
 
-    constraints = [u >= 1.0, cp.sum(c) == 1.0]
-    consA, _ = interval_nonneg_constraints(T @ (c - e0), n, -1.0, 1.0)
+    constraints = [u >= 1.0, cp.sum(cp.multiply(scale, c)) == 1.0]  # G(0) = 1
+    consA, _ = interval_nonneg_constraints(T @ _cheb_from_cosine_series(c - e0, n), n, -1.0, 1.0)
     constraints += consA
     for gamma, delta in J1:
         xlo, xhi = theta_interval_to_x(gamma, delta)
-        consB, _ = interval_nonneg_constraints(T @ (u * e0 - c), n, xlo, xhi)
+        consB, _ = interval_nonneg_constraints(T @ _cheb_from_cosine_series(u * e0 - c, n), n, xlo, xhi)
         constraints += consB
 
     problem = cp.Problem(cp.Minimize(u), constraints)
@@ -542,12 +561,20 @@ def _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs):
                     [cp.reshape(a, (1, n + 1), order="C"), np.array([[1.0]])]])
     constraints = [lift >> 0, u >= 1.0, cp.sum(a) == 1.0]
 
+    # c = _autocorr_from_A(A, n) is the RAW (undoubled) autocorrelation of A
+    # (trace(A)=f_0, l-th diagonal band sum=f_l -- verified directly: for a
+    # rank-1 A=a a^T this reproduces certify._autocorr(a) exactly), so it
+    # needs the same _cheb_from_cosine_series rescaling as design_filter's
+    # own c and design_sdp_magnitude's f before poly_sdp's Chebyshev-basis
+    # machinery (which has no notion of the factor of 2) sees it -- this
+    # was the confirmed bug described in the module docstring, still
+    # present here despite that docstring's claim it was fixed everywhere.
     c = _autocorr_from_A(A, n)
-    consA, _ = interval_nonneg_constraints(T @ (c - e0), n, -1.0, 1.0)
+    consA, _ = interval_nonneg_constraints(T @ _cheb_from_cosine_series(c - e0, n), n, -1.0, 1.0)
     constraints += consA
     for gamma, delta in J1:
         xlo, xhi = theta_interval_to_x(gamma, delta)
-        consB, _ = interval_nonneg_constraints(T @ (u * e0 - c), n, xlo, xhi)
+        consB, _ = interval_nonneg_constraints(T @ _cheb_from_cosine_series(u * e0 - c, n), n, xlo, xhi)
         constraints += consB
 
     coshmu0 = float(np.cosh(mu0))
