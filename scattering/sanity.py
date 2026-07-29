@@ -25,6 +25,7 @@ import numpy as np
 
 from .forward import a_from_alphas, forward_reconstruct, forward_with_grad, q1_abs_sq
 from .inverse import alphas_from_a, check_min_phase
+from .certify import certify
 
 
 def test_forward_inverse_roundtrip(alphas: np.ndarray, tol: float = 1e-10) -> dict:
@@ -113,6 +114,34 @@ def test_forward_with_grad(alphas: np.ndarray, theta: np.ndarray, h: float = 1e-
     return {"passed": passed, "value_err": value_err, "dQ_abs_err": dQ_err, "dkappa_abs_err": dkappa_err}
 
 
+def test_certify(alphas: np.ndarray, J0, J1, sigma, n_grid: int = 2_000_000, tol: float = 1e-9) -> dict:
+    """certify's exact (rootfinding) delta/mu_min against a very fine grid
+    brute force -- the grid can only ever *underestimate* the true extremum
+    (it samples finitely many points), so exact and grid values should
+    agree to within the grid's own resolution once that resolution is fine
+    enough; true agreement should be exact to floating-point precision
+    since both read off the same underlying trigonometric polynomial, just
+    one via calculus and one via sampling."""
+    from .forward import kappa_B, q1_abs_sq
+
+    a = a_from_alphas(np.asarray(alphas, dtype=float))
+    res = certify(alphas, J0, J1, sigma)
+
+    grid_delta = max((float(np.max(q1_abs_sq(a, np.linspace(lo, hi, n_grid)) - 1.0)) for lo, hi in J1),
+                      default=0.0)
+    grid_depth = min((float(np.min(s * kappa_B(a, np.linspace(lo, hi, n_grid))))
+                       for (lo, hi), s in zip(J0, sigma)), default=float("inf"))
+    grid_mu = np.arccosh(max(grid_depth, 1.0)) if J0 else float("inf")
+
+    delta_err = abs(res.delta - grid_delta)
+    mu_err = abs(res.mu_min - grid_mu) if J0 else 0.0
+    # certify's exact value must never be *worse* than what the grid found
+    # (grid can only underestimate max(Q-1), overestimate min depth)
+    sound = res.delta >= grid_delta - tol and (not J0 or res.mu_min <= grid_mu + tol)
+    passed = sound and delta_err < 1e-6 and mu_err < 1e-6
+    return {"passed": passed, "delta_err": delta_err, "mu_err": mu_err, "sound": sound}
+
+
 def _print_case(name: str, alphas: np.ndarray):
     r1 = test_forward_inverse_roundtrip(alphas)
     status1 = "PASS" if r1["passed"] else ("FAIL (expected)" if not r1["expected_to_pass"] else "FAIL (unexpected!)")
@@ -175,6 +204,22 @@ def run_all_sanity_checks() -> bool:
     print(f"  [e] {status_e}  (value_err={rg['value_err']:.3e}, "
           f"dQ_abs_err={rg['dQ_abs_err']:.3e}, dkappa_abs_err={rg['dkappa_abs_err']:.3e})")
     all_ok &= rg["passed"]
+
+    print("(f) certify: exact rootfinding delta/mu_min vs. fine-grid brute force")
+    from .bandgap import find_bands_gaps
+    alphas_f = np.array([0.5, -0.3, -0.2])
+    a_f = a_from_alphas(alphas_f)
+    bgs = find_bands_gaps(a_f)
+    if bgs.bands and bgs.gaps:
+        gap_lo, gap_hi, gap_sign = bgs.gaps[0]
+        J1_f, J0_f, sigma_f = [bgs.bands[0]], [(gap_lo, gap_hi)], [gap_sign]
+        rc = test_certify(alphas_f, J0_f, J1_f, sigma_f)
+        status_f = "PASS" if rc["passed"] else "FAIL (unexpected!)"
+        print(f"  [f] {status_f}  (delta_err={rc['delta_err']:.3e}, "
+              f"mu_err={rc['mu_err']:.3e}, sound={rc['sound']})")
+        all_ok &= rc["passed"]
+    else:
+        print("  [f] SKIPPED: no band/gap found for this alphas vector")
 
     print()
     print("ALL SANITY CHECKS " + ("PASSED" if all_ok else "FAILED (see 'unexpected' entries above)"))
