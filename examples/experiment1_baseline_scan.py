@@ -55,7 +55,7 @@ def main():
     # inside the natural gap [0.676, 1.282]) and, at width 0.4, also much
     # wider than the earlier ~0.09-wide sub-window. Both still sit strictly
     # inside their respective natural band/gap.
-    I1 = [(0.0, 0.55)]
+    I1 = [(0.0, 0.45)]  # narrowed a little from the first widened rerun's 0.55
     I0 = [(0.8, 1.2)]
     # theta=0 is always in the band (constraint D forces kappa_B(0)=1
     # identically), so I1 starting exactly at 0 is fine even though
@@ -115,8 +115,13 @@ def main():
           f"TN_stop_bound={cert_c.TN_stop_bound}  TN_pass_bound={cert_c.TN_pass_bound}")
 
     # --- 2x2 figure: kappa/T_N for (a) and (c), common theta-grid ---
-    theta = np.linspace(1e-3, np.pi - 1e-3, 4000)
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
+    # Full range [-0.05, 2*pi+0.05]: kappa_B/Q/T_N are all even (a real, so
+    # q~_1(-theta)=conj(q~_1(theta))) and 2*pi-periodic in theta, so
+    # forward.py's own formulas (built directly on cos(theta)/e^{i m theta})
+    # are already valid there with no special-casing -- this just displays
+    # more of one already-defined periodic function, not a new domain.
+    theta = np.linspace(-0.05, 2 * np.pi + 0.05, 8000)
+    fig, axes = plt.subplots(2, 2, figsize=(13, 7), sharex=True)
 
     for col, (label, a_vec) in enumerate([("(a) unoptimised, n=3", a_a), (f"(c) best scan, n={best.n}", a_c)]):
         kap = kappa_B(a_vec, theta)
@@ -135,6 +140,9 @@ def main():
         ax_T.legend(fontsize=8)
 
         for ax in (ax_k, ax_T):
+            ax.set_xlim(-0.05, 2 * np.pi + 0.05)
+            ax.set_xticks([0, np.pi / 2, np.pi, 3 * np.pi / 2, 2 * np.pi])
+            ax.set_xticklabels(["0", r"$\pi/2$", r"$\pi$", r"$3\pi/2$", r"$2\pi$"])
             for lo, hi in I0:
                 ax.axvspan(lo, hi, color="red", alpha=0.15)
             for lo, hi in I1:

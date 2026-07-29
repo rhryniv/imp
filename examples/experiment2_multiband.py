@@ -61,14 +61,21 @@ def main():
     print(f"  TN_pass_bound={cert.TN_pass_bound}")
 
     # --- T_N plot for the best design ---
-    theta = np.linspace(1e-3, np.pi - 1e-3, 4000)
-    fig, ax = plt.subplots(figsize=(9, 4.5))
+    # Full range [-0.05, 2*pi+0.05]: kappa_B/Q/T_N are all even and
+    # 2*pi-periodic in theta, so forward.py's own formulas are already
+    # valid there with no special-casing -- this just displays more of one
+    # already-defined periodic function, not a new domain.
+    theta = np.linspace(-0.05, 2 * np.pi + 0.05, 8000)
+    fig, ax = plt.subplots(figsize=(11, 4.5))
     for N in N_values:
         ax.plot(theta, transmission_TN(a_best, theta, N), label=f"N={N}")
     for lo, hi in I0:
         ax.axvspan(lo, hi, color="red", alpha=0.15)
     for lo, hi in I1:
         ax.axvspan(lo, hi, color="green", alpha=0.15)
+    ax.set_xlim(-0.05, 2 * np.pi + 0.05)
+    ax.set_xticks([0, np.pi / 2, np.pi, 3 * np.pi / 2, 2 * np.pi])
+    ax.set_xticklabels(["0", r"$\pi/2$", r"$\pi$", r"$3\pi/2$", r"$2\pi$"])
     ax.set_xlabel(r"$\theta = 2kh$")
     ax.set_ylabel(r"$T_N(\theta)$")
     ax.set_title(f"Experiment 2: best design n={best.n}, delta={best.delta_achieved:.3e}")
