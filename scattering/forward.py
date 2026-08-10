@@ -42,6 +42,59 @@ def a_from_alphas(alphas: np.ndarray) -> np.ndarray:
     return p1[::-1].copy()
 
 
+def eval_poly(coeffs: np.ndarray, w: np.ndarray) -> np.ndarray:
+    """p(w) = sum_k coeffs[k] w^k, coeffs in increasing powers (Horner)."""
+    coeffs = np.asarray(coeffs)
+    w = np.asarray(w)
+    result = np.zeros_like(w, dtype=np.result_type(coeffs.dtype, w.dtype, complex))
+    for c in coeffs[::-1]:
+        result = result * w + c
+    return result
+
+
+def forward_matrix_product(alphas: np.ndarray, theta: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(p1, p2) evaluated at theta via the LITERAL per-layer SU(1,1) transfer
+    matrices of Sec. 3.1/3.2 (M(alpha_j, k*x_j), x_j=j*h), rather than
+    forward_reconstruct's coefficient-vector recursion -- an independently
+    coded second path for Stage 1's cross-check (spec Sec. 2: "(a) the
+    recursion above; (b) the direct SU(1,1) product of Sec. 3's transfer
+    matrices... must agree to machine precision").
+
+    Uses Sec. 4.1's own identification p_{1,j}(w) = q_{1,j}(k) exactly, and
+    p_{2,j}(w) = e^{-2i k x_j} q_{2,j}(k) (eq. after 4.2): tracks the
+    *physical* partial transfer-matrix entries q_{1,j}(k), q_{2,j}(k) via
+
+        q_{1,j} = cosh(a_j) q_{1,j-1} + sinh(a_j) e^{-2ikx_j} q_{2,j-1}
+        q_{2,j} = sinh(a_j) e^{+2ikx_j} q_{1,j-1} + cosh(a_j) q_{2,j-1}
+
+    with explicit *position-dependent* phases e^{+-2ikx_j} at every layer
+    (x_j=j*h, so k*x_j = j*theta/2, i.e. e^{-2ikx_j}=e^{-ij*theta}) --
+    algebraically equivalent to path (a)'s single running w-multiplication
+    per step, but via a genuinely different intermediate computation (no
+    coefficient vectors, no padding/shifting, pure pointwise complex
+    arithmetic throughout), then converts back to (p1, p2) via the single
+    w^n phase correction on q2 at the very end, per the identification
+    above.
+
+    Verified by hand against fixture F1 (n=1, alpha=(log2,-log2)): matches
+    the manuscript's own closed form p1(w) = 25/16 - (9/16)w exactly.
+    """
+    alphas = np.asarray(alphas, dtype=float)
+    n = len(alphas) - 1
+    theta = np.atleast_1d(np.asarray(theta, dtype=float))
+
+    q1 = np.full(theta.shape, np.cosh(alphas[0]), dtype=complex)   # q_{1,0}(k) = cosh(alpha_0)
+    q2 = np.full(theta.shape, np.sinh(alphas[0]), dtype=complex)   # q_{2,0}(k) = sinh(alpha_0)
+    for j in range(1, n + 1):
+        ch, sh = np.cosh(alphas[j]), np.sinh(alphas[j])
+        phase = np.exp(-1j * j * theta)          # e^{-2ikx_j}, x_j=j*h, k*x_j=j*theta/2
+        q1, q2 = ch * q1 + sh * phase * q2, sh * np.conj(phase) * q1 + ch * q2
+
+    p1 = q1
+    p2 = np.exp(-1j * n * theta) * q2            # w^n = e^{-in*theta}, phase correction at j=n
+    return p1, p2
+
+
 def forward_with_grad(alphas: np.ndarray, theta: np.ndarray):
     """Pointwise evaluation of p1(theta), Q(theta)=|p1|^2, kappa(theta), and
     their exact gradients w.r.t. every alpha_j, at given theta nodes
@@ -130,12 +183,44 @@ def kappa_B(a: np.ndarray, theta: np.ndarray) -> np.ndarray:
     return C.chebval(np.cos(theta), a)
 
 
-def q1_abs_sq(a: np.ndarray, theta: np.ndarray) -> np.ndarray:
-    """|q~_1(theta)|^2 = G(theta)."""
+def autocorr(a: np.ndarray) -> np.ndarray:
+    """f_0,...,f_n with Q(theta) = f_0 + 2*sum_{m>=1} f_m cos(m*theta),
+    f_m = sum_l a_l a_{l+m} (eq. f-autocorr). Reversal-invariant (the
+    autocorrelation of c and of its reverse a, a_m=c_{n-m}, coincide), so
+    it makes no difference which coefficient vector is passed in."""
     a = np.asarray(a, dtype=float)
-    m = np.arange(len(a))
-    q = np.exp(1j * np.outer(theta, m)) @ a
-    return np.abs(q) ** 2
+    n = len(a) - 1
+    return np.array([np.sum(a[: n + 1 - m] * a[m:]) for m in range(n + 1)])
+
+
+def Q_from_autocorr(a: np.ndarray, theta: np.ndarray) -> np.ndarray:
+    """Q(theta) = |q~_1(theta)|^2, computed as a single REAL cosine sum via
+    the autocorrelation f=autocorr(a) -- f_0 + 2*sum_{m>=1} f_m cos(m theta)
+    -- rather than evaluating the complex sum q~_1(theta)=sum a_m e^{im
+    theta} and squaring its modulus.
+
+    This matters numerically: the a_m span a wide dynamic range (products
+    of cosh/sinh(alpha_j) compounding through the layer recursion), so the
+    complex sum can suffer heavy cancellation even though |q~_1|>=1 always
+    (constraint A) -- and squaring an already-cancelled complex value
+    roughly doubles its relative error on top. Replacing "complex sum, then
+    square" with a single bounded real sum (the same pattern kappa_B
+    already uses via chebval) removes both the complex arithmetic and the
+    squaring step from the hot path. f itself is a one-off O(n^2)
+    computation per design, not repeated per grid point, so any
+    cancellation there is paid once rather than amplified across the whole
+    grid.
+    """
+    f = autocorr(a)
+    scale = np.concatenate([[1.0], 2.0 * np.ones(len(f) - 1)])
+    return C.chebval(np.cos(theta), scale * f)
+
+
+def q1_abs_sq(a: np.ndarray, theta: np.ndarray) -> np.ndarray:
+    """|q~_1(theta)|^2 = G(theta), via the numerically stable autocorrelation
+    route (Q_from_autocorr) rather than evaluating the complex sum
+    q~_1(theta)=sum a_m e^{im theta} and squaring its modulus."""
+    return Q_from_autocorr(a, theta)
 
 
 def q2_abs_sq(a: np.ndarray, theta: np.ndarray) -> np.ndarray:

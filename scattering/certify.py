@@ -15,7 +15,7 @@ from typing import Sequence
 
 import numpy as np
 
-from .forward import a_from_alphas, kappa_B, q1_abs_sq
+from .forward import a_from_alphas, autocorr, kappa_B, q1_abs_sq
 
 Interval = tuple[float, float]
 
@@ -60,12 +60,6 @@ def _extremal_thetas(deriv_coeffs: np.ndarray, lo: float, hi: float,
     return np.array(sorted(set(np.round(inside, 12))))
 
 
-def _autocorr(a: np.ndarray) -> np.ndarray:
-    """f_0,...,f_n with Q(theta) = f_0 + 2*sum_{m>=1} f_m cos(m*theta)."""
-    n = len(a) - 1
-    return np.array([np.sum(a[: n + 1 - m] * a[m:]) for m in range(n + 1)])
-
-
 def _extremize(coeffs: np.ndarray, intervals: Sequence[Interval], eval_fn, mode: str) -> float:
     """max/min of eval_fn(theta) over the union of intervals, exactly:
     eval_fn evaluated only at the interval endpoints and the exact
@@ -102,7 +96,7 @@ def certify(alphas: np.ndarray, J0: Sequence[Interval], J1: Sequence[Interval],
     ever evaluating T_N on a grid.
     """
     a = a_from_alphas(alphas)
-    f = _autocorr(a)
+    f = autocorr(a)
 
     delta = _extremize(f, J1, lambda th: q1_abs_sq(a, th) - 1.0, "max") if J1 else 0.0
 

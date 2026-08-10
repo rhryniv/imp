@@ -563,7 +563,7 @@ def _solve_full_for_sigma(n, J0, J1, mu0, sigma, T, solver, solver_kwargs, add_m
 
     # c = _autocorr_from_A(A, n) is the RAW (undoubled) autocorrelation of A
     # (trace(A)=f_0, l-th diagonal band sum=f_l -- verified directly: for a
-    # rank-1 A=a a^T this reproduces certify._autocorr(a) exactly), so it
+    # rank-1 A=a a^T this reproduces forward.autocorr(a) exactly), so it
     # needs the same _cheb_from_cosine_series rescaling as design_filter's
     # own c and design_sdp_magnitude's f before poly_sdp's Chebyshev-basis
     # machinery (which has no notion of the factor of 2) sees it -- this
