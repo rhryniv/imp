@@ -53,7 +53,15 @@ def test_forward_paths_agree(n):
 def test_fixture_F1():
     """n=1, rho_1=2: alpha=(log2,-log2), L=2. cosh(log2)=5/4, sinh(log2)=3/4,
     so p1(w)=25/16-(9/16)w, Q=(706-450cos theta)/256, kappa_B=(25cos theta-9)/16
-    -- all rational, checked near machine precision."""
+    -- all rational, checked near machine precision.
+
+    "One open gap per period": kappa_B(pi)=-34/16, strictly inside the gap
+    (not closed at +-1), so the gap visible in [0,pi] connects continuously
+    across theta=pi to its own mirror image on (pi,2pi) -- one continuous
+    gap over the full period [0,2pi]. Contrast test_fixture_F2, where
+    kappa_B(pi)=+1 exactly (closed), splitting the mirror image into a
+    second, separate gap.
+    """
     alphas = np.array([np.log(2.0), -np.log(2.0)])
     c1, c2 = forward_reconstruct(alphas)
     assert np.allclose(c1, [25 / 16, -9 / 16], atol=1e-14)
@@ -82,32 +90,27 @@ def test_fixture_F1():
 
 
 def test_fixture_F2():
-    """n=2, rho_1=rho_2=2: alpha=(log2,0,-log2), L=4.
+    """n=2, rho_1=rho_2=2: alpha=(log2,0,-log2), L=4. Must show two open
+    gaps per PERIOD, i.e. over the full [0,2pi] range, not [0,pi].
 
-    NOTE -- discrepancy from the spec's own description, flagged rather
-    than silently forced (Authority rule, spec Sec. 0): codespec6.4.md
-    says this fixture "must show two open gaps per period." Hand
-    verification against the exact closed form contradicts this: a =
-    (-9/16, 0, 25/16) exactly (matches c_0=25/16, c_1=0, c_2=-9/16 from
-    the recursion by hand), so
+    kappa_B is even and 2*pi-periodic, so [0,pi] only ever shows ONE
+    connected gap component even when there are two per period: generically
+    kappa_B(pi) sits strictly inside a gap (not at +-1), so the gap in
+    [0,pi] connects continuously, across pi, to its own mirror image on
+    (pi,2pi) -- one continuous gap over the full period. Two SEPARATE gap
+    components requires kappa_B(pi) to close exactly at +-1, pinching the
+    [0,pi] gap so it stays confined to the open interval (0,pi); its mirror
+    image is then a second, distinct gap on (pi,2pi).
 
-        kappa_B(theta) = -9/16 + (25/16) cos(2 theta)        exactly
-
-    (confirmed to 2.2e-16 against the direct evaluation). This is a
-    single cosine in 2*theta: it attains its max of exactly 1 ONLY at
-    theta=0 and theta=pi (band edges, not exceeded in the interior) and
-    dips to a single minimum of -34/16=-2.125 at theta=pi/2 -- i.e.
-    exactly ONE open gap in [0,pi], not two. The apparent period
-    compression (kappa_B here has fundamental period pi in theta, not
-    2*pi, because a_1=0 kills the odd harmonic) is a genuine consequence
-    of this specific symmetric alpha choice, not an implementation bug:
-    F1's identical pipeline is independently verified exact (previous
-    test), and this fixture's own p1(w)=25/16-(9/16)w^2 matches the
-    hand-derived recursion coefficient-by-coefficient.
-
-    This test therefore asserts what is actually true, and documents the
-    discrepancy for the manuscript/spec to resolve -- see the module
-    docstring and the implementation report.
+    Exact closed form here (a=(-9/16,0,25/16), matching the recursion by
+    hand): kappa_B(theta) = -9/16 + (25/16)cos(2 theta), confirmed to
+    2.2e-16 against direct evaluation. This attains its max of exactly 1 at
+    BOTH theta=0 (universal, kappa_B(0)=1 for every design) AND theta=pi
+    (specific to this alpha) -- exactly the closed-gap-at-pi signature
+    above -- with a single dip to -34/16 at theta=pi/2 confined to (0,pi).
+    So: one open gap directly visible in [0,pi], closed exactly at pi,
+    hence two open gaps over the full period [0,2pi] -- matching the
+    fixture's own claim exactly.
     """
     alphas = np.array([np.log(2.0), 0.0, -np.log(2.0)])
     c1, _ = forward_reconstruct(alphas)
@@ -121,14 +124,24 @@ def test_fixture_F2():
     closed_form = -9 / 16 + (25 / 16) * np.cos(2 * theta)
     assert np.max(np.abs(kap - closed_form)) < 1e-13
 
-    assert abs(kap.max() - 1.0) < 1e-10                  # touches +1 only at the edges
+    kap_0 = kappa_B(a, np.array([0.0]))[0]
+    kap_pi = kappa_B(a, np.array([np.pi]))[0]
+    assert abs(kap_0 - 1.0) < 1e-13                       # universal: kappa_B(0)=1 for every design
+    assert abs(kap_pi - 1.0) < 1e-13                      # closed gap AT pi -- specific to this alpha
+
     kap_mid = kappa_B(a, np.array([np.pi / 2]))[0]
     assert abs(kap_mid - (-34 / 16)) < 1e-13              # single dip to -34/16 at theta=pi/2
     assert kap.min() >= -34 / 16 - 1e-9                   # grid can only ever miss the true min
 
+    # exactly one open gap component directly visible in [0,pi] ...
     is_gap = np.abs(kap) > 1.0 + 1e-9
     n_gaps = int(np.sum(np.diff(is_gap.astype(int)) == 1) + (1 if is_gap[0] else 0))
-    assert n_gaps == 1, f"hand-verified closed form predicts exactly 1 open gap, code found {n_gaps}"
+    assert n_gaps == 1
+    # ... confined strictly inside (0,pi) (closed at both ends, not touching
+    # the domain boundary as an open gap would) -- combined with
+    # kappa_B(pi)=1 above, this is the "two gaps per period" signature: the
+    # mirror image on (pi,2pi) is a second, separate gap component.
+    assert not is_gap[0] and not is_gap[-1]
 
 
 def test_fixture_F3():
