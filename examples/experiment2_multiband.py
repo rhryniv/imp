@@ -19,7 +19,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from scattering.forward import a_from_alphas, transmission_TN
-from scattering.certify import certify
+from scattering.certify import certify_exact
 from scattering.experiment import degree_scan_direct, best_degree_record, save_records, check_delta_mag_monotone
 
 
@@ -55,8 +55,9 @@ def main():
     alphas_best = np.asarray(best.alpha, dtype=float)
     a_best = a_from_alphas(alphas_best)
     sigma_best = tuple(best.sigma)
-    cert = certify(alphas_best, I0, I1, sigma_best, N_values=N_values)
-    print(f"\ncertify(best): delta={cert.delta:.6e}  mu_min={cert.mu_min:.6f}  phi_min={cert.phi_min:.6f}")
+    cert = certify_exact(alphas_best, I0, I1, sigma_best, N_values=N_values)
+    mu_min_str = "None" if cert.mu_min is None else f"{cert.mu_min:.6f}"
+    print(f"\ncertify_exact(best): delta={cert.delta:.6e}  mu_min={mu_min_str}  s_0={cert.s_0}")
     print(f"  TN_stop_bound={cert.TN_stop_bound}")
     print(f"  TN_pass_bound={cert.TN_pass_bound}")
 

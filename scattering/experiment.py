@@ -30,7 +30,7 @@ from .sdp_design import (
     design_sdp_magnitude, design_direct, design_filter_full,
     _factorize_magnitude_f, _seed_gap_quality, MagnitudeSDPResult, DirectDesignResult,
 )
-from .certify import certify
+from .certify import certify_exact
 
 Interval = tuple[float, float]
 
@@ -123,7 +123,7 @@ def run_degree(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0: floa
     mu_min_certified = None
     delta_certified = None
     if direct_res.status == "optimal" and alpha is not None:
-        cert = certify(alpha, J0, J1, sigma, N_values=N_values)
+        cert = certify_exact(alpha, J0, J1, sigma, N_values=N_values)
         mu_min_certified = cert.mu_min
         delta_certified = cert.delta
 

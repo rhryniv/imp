@@ -997,7 +997,7 @@ def _phase2_flatten(n: int, J0: Sequence[Interval], J1: Sequence[Interval], mu0:
     Grid discretisation is harmless here (unlike the SDP): (A) and (D)
     hold identically in the alpha-chart (forward_reconstruct/
     forward_with_grad), so sampling can only cost margin in (B)/(C), never
-    realizability -- see certify() for the grid-independent final numbers.
+    realizability -- see certify_exact() for the grid-independent final numbers.
 
     Run once per named seed in seed_pool ({name: gamma0}); returns
     (alphas, delta, per_start) with per_start = {name: achieved delta or

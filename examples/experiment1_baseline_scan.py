@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 from scattering.forward import a_from_alphas, kappa_B, transmission_TN
 from scattering.bandgap import find_bands_gaps
 from scattering.sdp_design import design_direct
-from scattering.certify import certify
+from scattering.certify import certify_exact
 from scattering.experiment import degree_scan_direct, best_degree_record, save_records, check_delta_mag_monotone
 
 
@@ -110,8 +110,9 @@ def main():
     # certify (a) has no target sigma of its own -- report kappa/T_N only,
     # not a certified delta/mu_min (I0/I1 were read off *its* geometry,
     # they were never a design target for it).
-    cert_c = certify(alphas_c, I0, I1, sigma_c, N_values=N_values)
-    print(f"\n    certify(c): delta={cert_c.delta:.6e}  mu_min={cert_c.mu_min:.6f}  "
+    cert_c = certify_exact(alphas_c, I0, I1, sigma_c, N_values=N_values)
+    mu_min_str = "None" if cert_c.mu_min is None else f"{cert_c.mu_min:.6f}"
+    print(f"\n    certify_exact(c): delta={cert_c.delta:.6e}  mu_min={mu_min_str}  s_0={cert_c.s_0}  "
           f"TN_stop_bound={cert_c.TN_stop_bound}  TN_pass_bound={cert_c.TN_pass_bound}")
 
     # --- 2x2 figure: kappa/T_N for (a) and (c), common theta-grid ---
