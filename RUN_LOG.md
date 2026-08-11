@@ -157,18 +157,28 @@ applied explicitly to every constraint Jacobian built on `gamma_free`.
   reliably enough to escape it for every target depth `mu_0` and degree
   `n` -- confirmed empirically while building Phase 1, not assumed.
 - Phase 2 (`build_seed_pool`, one pool per sign pattern per degree): the
-  Phase-1 point itself; up to 4 zero-padded embeddings *per smaller
-  degree already in the scan* (`_padded_alpha_seeds`'
-  `max_variants=4`: trailing-zero, leading-zero, split-down-the-middle,
-  plus randomly-positioned insertions up to the cap) -- not just the
-  immediately preceding degree, every smaller degree `degree_scan_stage3`
-  has already solved, per rule 5; `n_random=3` random draws at a small
-  fixed scale (`0.02 * Normal(0,1)^n`, deliberately small -- these are
-  meant to probe near the already-good Phase-1/padded points, not
-  explore broadly); and, off by default, a fourth *investigative* member
-  from the magnitude-SDP factorization (`magnitude_seed`), added only to
-  answer the manuscript's own open question about that warm start
-  (tracked via `start_origin`), not used as a routine seed.
+  Phase-1 point itself; ONE zero-padded embedding *per smaller degree
+  already in the scan* (`_padded_alpha_seeds`' first/trailing-zero
+  variant only, out of its `max_variants=4`) -- not just the immediately
+  preceding degree, every smaller degree `degree_scan_stage3` has
+  already solved, per rule 5; `n_random=3` random draws at a small fixed
+  scale (`0.02 * Normal(0,1)^n`, deliberately small -- these are meant to
+  probe near the already-good Phase-1/padded points, not explore
+  broadly); and, off by default, a fourth *investigative* member from the
+  magnitude-SDP factorization (`magnitude_seed`), added only to answer
+  the manuscript's own open question about that warm start (tracked via
+  `start_origin`), not used as a routine seed.
+
+  Originally all 4 of `_padded_alpha_seeds`' variants were kept per
+  smaller degree; found empirically, while running the actual n=2..16
+  Instance 1/2 scans, that this makes the pool (and hence the number of
+  Phase 2 SLSQP solves per degree) grow ~4x faster than needed -- by
+  n=16 that is ~14 prior degrees x 4 variants, per sign pattern for
+  multi-band instances, and neither scan had finished after 48 minutes.
+  Reported to the user with that evidence before cutting to 1 variant per
+  smaller degree (kept: the trailing-zero placement) -- the informative
+  part of a padded seed is which smaller degree it came from, not which
+  of 3-4 structurally similar placements of the padding was used.
 - No member of either pool is screened for constraint feasibility before
   being handed to SLSQP -- deliberate, not an oversight: the spec is
   explicit that zero-padded starts are typically infeasible by

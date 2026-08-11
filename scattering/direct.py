@@ -264,13 +264,27 @@ def build_seed_pool(n: int, phase1_alpha: np.ndarray | None,
                      magnitude_seed: np.ndarray | None = None,
                      n_random: int = 3, gamma_bound: float = 0.9995,
                      seed: int = 0) -> dict[str, np.ndarray]:
-    """The Phase 2 start pool (spec Sec. 3.2): Phase-1 point; zero-padded
-    embeddings of designs retained at lower degrees; a small number of
-    random draws -- plus, OFF unless magnitude_seed is given, a fourth
-    investigative member (the magnitude-SDP factorisation) purely to
-    answer the manuscript's own open question about that warm start
+    """The Phase 2 start pool (spec Sec. 3.2): Phase-1 point; one
+    zero-padded embedding per design retained at a lower degree; a small
+    number of random draws -- plus, OFF unless magnitude_seed is given, a
+    fourth investigative member (the magnitude-SDP factorisation) purely
+    to answer the manuscript's own open question about that warm start
     (tracked via start_origin, spec Sec. 6). No member is screened for
-    (C)-feasibility here or anywhere downstream."""
+    (C)-feasibility here or anywhere downstream.
+
+    ONE padded variant per smaller degree, not all of
+    _padded_alpha_seeds' up to 4 -- found empirically (a real
+    degree_scan_stage3 run over n=2..16) that keeping every variant from
+    every smaller degree already in the scan makes the pool, and hence
+    the number of Phase 2 SLSQP solves per degree, grow ~4x faster than
+    necessary: by n=16 that was ~14 prior degrees x 4 variants, on top of
+    the phase1/random members, and per-sign-pattern for multi-band
+    instances -- a scan that hadn't finished after 48 minutes. Only the
+    trailing-zero-padding variant (_padded_alpha_seeds' own first
+    element -- append the new layers after the existing block rather
+    than before or splitting it) is kept per smaller degree; the smaller
+    degree itself is still the informative part of the seed, not which
+    of the 3-4 structurally-similar padding placements was used."""
     rng = np.random.default_rng(seed)
     pool: dict[str, np.ndarray] = {}
 
@@ -281,9 +295,8 @@ def build_seed_pool(n: int, phase1_alpha: np.ndarray | None,
         for n_small, alphas_small in smaller_solutions.items():
             if n_small >= n:
                 continue
-            padded_variants = _padded_alpha_seeds(np.asarray(alphas_small, dtype=float), n, rng)
-            for i, padded in enumerate(padded_variants):
-                pool[f"zero_pad_from_n{n_small}_{i}"] = np.clip(np.tanh(padded[:n]), -gamma_bound, gamma_bound)
+            padded = _padded_alpha_seeds(np.asarray(alphas_small, dtype=float), n, rng)[0]
+            pool[f"zero_pad_from_n{n_small}"] = np.clip(np.tanh(padded[:n]), -gamma_bound, gamma_bound)
 
     if magnitude_seed is not None:
         pool["magnitude_sdp_seed"] = np.clip(np.tanh(np.asarray(magnitude_seed, dtype=float)[:n]),
