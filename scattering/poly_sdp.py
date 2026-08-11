@@ -71,8 +71,28 @@ def interval_nonneg_constraints(coeff_expr: cp.Expression, deg: int, a: float, b
                    sigma0, sigma1 SOS of degree <= 2m (Gram size m+1 each).
     Returns (constraints, gram_vars) so callers can inspect the Gram
     matrices afterwards (e.g. for a rank/tightness check) if desired.
+
+    Spec Sec. 5 rule 1 ("odd-degree padding"): the odd-degree branch above
+    is the direct/standard Markov-Lukacs form for odd degree (each SOS
+    term carries its own degree-1 factor, (x-a) or (b-x), rather than a
+    single degree-2m SOS padded up to 2m+1) -- mathematically equivalent
+    to padding, not a truncated/even-only implementation. Empirically
+    audited (tests/test_stage3_poly_sdp.py) against polynomials with known
+    nonnegativity status on an interval, both parities, including
+    boundary-touching and interior-double-root edge cases: no case found
+    where this returns a feasible/infeasible verdict inconsistent with the
+    true pointwise sign. The degree-parity assertion below guards the
+    other half of rule 1 -- a coeff_expr/deg length mismatch at the call
+    site, which is the actual "returns a number that is not a bound,
+    without erroring" failure mode the rule describes.
     """
     assert b > a
+    assert coeff_expr.shape == (deg + 1,), (
+        f"coeff_expr has shape {coeff_expr.shape}, expected ({deg + 1},) for deg={deg} "
+        "-- spec Sec. 5 rule 1: a length/degree mismatch here is exactly the silent, "
+        "non-erroring failure mode rule 1 warns about, so this is asserted rather than "
+        "left to fail downstream (or not fail at all)."
+    )
     constraints = []
     gram_vars = []
     if deg % 2 == 0:
