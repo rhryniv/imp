@@ -4,14 +4,20 @@ not a reuse of sdp_design.py's earlier `design_direct`, because the two
 now differ in several load-bearing ways the Authority rule (spec Sec. 0)
 requires flagging rather than silently reconciling:
 
-  - Phase 1 runs ALL 2^m0 sign patterns to convergence (no early exit)
-    and passes only the SINGLE largest-margin winner to Phase 2 -- the
-    earlier design_direct instead ran Phase 2 for every sigma pattern
-    that cleared Phase 1's threshold, because trying only the largest
-    margin had proven unreliable in that project's own testing. This
-    implementation follows the new spec literally; kappa_min_by_sigma is
-    recorded for every pattern specifically so a regression is visible,
-    not silently worked around again.
+  - Phase 1 runs ALL 2^m0 sign patterns to convergence (no early exit).
+    A SECOND, user-approved deviation from spec Sec. 3.2's literal "the
+    pattern with the largest value is passed to Phase 2": Phase 2 is run
+    for EVERY Phase-1-feasible pattern, not just the single largest-margin
+    one, and the best (min delta) result across all of them is kept --
+    confirmed directly (n=7 multiband case) that the largest-margin
+    pattern is not always the one that actually flattens well
+    (sigma=(-1,-1), kappa_min=1.926, gave delta=57.9, while the discarded
+    sigma=(-1,1), kappa_min=1.00125, gave the correct delta=0.0277671...,
+    exactly reproducing the earlier design_direct's own reason for the
+    same choice). Cost is modest: m_0 is typically 1-3 in the manuscript's
+    own instances, so at most 2^m_0<=8 Phase 2 solves. kappa_min_by_sigma
+    is still recorded for every pattern regardless, as the direct emission
+    source (spec Sec. 6) and so any future regression stays visible.
   - Phase 2's start pool is exactly the three the spec lists (the
     Phase-1 point, zero-padded lower-degree embeddings, small random
     draws), with NO screening for (C)-feasibility of any start -- the
@@ -234,6 +240,7 @@ def phase1_all_sign_patterns(n: int, I0: Sequence[Interval], mu0: float,
     winner = max(feasible, key=lambda s: kappa_min_by_sigma[s]) if feasible else None
     return {
         "kappa_min_by_sigma": kappa_min_by_sigma,
+        "alpha_by_sigma": alpha_by_sigma,
         "feasible": feasible,
         "winner": winner,
         "winner_alpha": alpha_by_sigma.get(winner) if winner is not None else None,
@@ -431,35 +438,53 @@ def design_direct_literal(n: int, I0: Sequence[Interval], I1: Sequence[Interval]
                            gamma_bound: float = 0.9995, maxiter: int = 400,
                            seed: int = 0) -> DirectDesignResult:
     """Stage 2's top-level orchestrator, one degree n: Phase 1 (all sign
-    patterns, single largest-margin winner) -> seed pool -> Phase 2. This
-    is what the eventual driver calls once per degree; see the module
-    docstring for how this differs, deliberately, from the earlier
-    sdp_design.design_direct."""
+    patterns) -> Phase 2 for EVERY Phase-1-feasible pattern, keeping the
+    best (min delta) -- a user-approved, flagged deviation from spec Sec.
+    3.2's literal "the pattern with the largest value is passed to Phase
+    2" (see direct.py's module docstring): confirmed on the n=7 multiband
+    case that the largest-margin pattern is not always the one that
+    actually flattens well (sigma=(-1,-1), kappa_min=1.926, gave
+    delta=57.9, while the discarded sigma=(-1,1), kappa_min=1.00125, gave
+    the correct delta=0.0277671...). Cost is modest in practice: m_0 is
+    typically 1-3 per the manuscript's own instances, so at most 2^m_0<=8
+    Phase 2 solves, not a drastic overhead. This is what the eventual
+    driver calls once per degree; see the module docstring for how this
+    (and the rest of this function) differs, deliberately, from the
+    earlier sdp_design.design_direct."""
     theta_B = [np.linspace(lo, hi, n_grid_B) for lo, hi in I1]
     theta_C = [np.linspace(lo, hi, n_grid_C) for lo, hi in I0]
 
     if I0:
         p1 = phase1_all_sign_patterns(n, I0, mu0, theta_C, gamma_bound=gamma_bound,
                                        maxiter=maxiter, seed=seed)
-        if p1["winner"] is None:
-            return DirectDesignResult(n=n, mu0=mu0, status="phase1_infeasible",
-                                       kappa_min_by_sigma=p1["kappa_min_by_sigma"])
-        sigma_star = p1["winner"]
-        phase1_alpha = p1["winner_alpha"]
         kappa_min_by_sigma = p1["kappa_min_by_sigma"]
+        if not p1["feasible"]:
+            return DirectDesignResult(n=n, mu0=mu0, status="phase1_infeasible",
+                                       kappa_min_by_sigma=kappa_min_by_sigma)
+        candidate_sigmas = p1["feasible"]
+        phase1_alpha_by_sigma = p1["alpha_by_sigma"]
     else:
-        sigma_star = ()
-        phase1_alpha = np.zeros(n + 1)
+        candidate_sigmas = [()]
+        phase1_alpha_by_sigma = {(): np.zeros(n + 1)}
         kappa_min_by_sigma = {}
 
-    seed_pool = build_seed_pool(n, phase1_alpha, smaller_solutions, magnitude_seed,
-                                 gamma_bound=gamma_bound, seed=seed)
-    p2 = phase2_flatten(n, I0, I1, mu0, sigma_star, seed_pool, theta_B, theta_C,
-                         gamma_bound=gamma_bound, maxiter=maxiter)
-    if p2.alpha is None:
-        return DirectDesignResult(n=n, mu0=mu0, status="phase2_infeasible", sigma_star=sigma_star,
-                                   kappa_min_by_sigma=kappa_min_by_sigma, per_start=p2.per_start)
+    best: tuple[float, Phase2Result, tuple] | None = None
+    per_start_by_sigma: dict[tuple, dict] = {}
+    for sigma in candidate_sigmas:
+        seed_pool = build_seed_pool(n, phase1_alpha_by_sigma[sigma], smaller_solutions, magnitude_seed,
+                                     gamma_bound=gamma_bound, seed=seed)
+        p2 = phase2_flatten(n, I0, I1, mu0, sigma, seed_pool, theta_B, theta_C,
+                             gamma_bound=gamma_bound, maxiter=maxiter)
+        per_start_by_sigma[sigma] = p2.per_start
+        if p2.alpha is not None and (best is None or p2.delta < best[0]):
+            best = (p2.delta, p2, sigma)
 
+    if best is None:
+        return DirectDesignResult(n=n, mu0=mu0, status="phase2_infeasible",
+                                   kappa_min_by_sigma=kappa_min_by_sigma,
+                                   per_start={str(s): ps for s, ps in per_start_by_sigma.items()})
+
+    _, p2, sigma_star = best
     a = a_from_alphas(p2.alpha)
     impedances = np.empty(n + 2)
     impedances[0] = 1.0
@@ -469,4 +494,5 @@ def design_direct_literal(n: int, I0: Sequence[Interval], I1: Sequence[Interval]
     return DirectDesignResult(n=n, mu0=mu0, status="optimal", sigma_star=sigma_star,
                                alpha=p2.alpha, a=a, impedances=impedances, delta=p2.delta,
                                kappa_min_by_sigma=kappa_min_by_sigma,
-                               start_origin=p2.start_origin, per_start=p2.per_start)
+                               start_origin=p2.start_origin,
+                               per_start={str(s): ps for s, ps in per_start_by_sigma.items()})
