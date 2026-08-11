@@ -33,14 +33,18 @@ N_RANGE = range(2, 17)
 N_VALUES = (20, 40, 60, 80, 100)
 
 
+def _fmt(x):
+    return "None" if x is None else f"{x:.6e}"
+
+
 def main():
     t0 = time.time()
     records = degree_scan_stage3(N_RANGE, I0, I1, MU0, EPS0, EPS1, N_values=N_VALUES)
     print(f"scan finished in {time.time() - t0:.1f}s")
 
     for r in records:
-        print(f"n={r.n:2d} status={r.status:20s} underline_delta={r.underline_delta!s:>14.14} "
-              f"delta_achieved={r.delta_achieved!s:>14.14} admissible={r.admissible} "
+        print(f"n={r.n:2d} status={r.status:20s} underline_delta={_fmt(r.underline_delta):>14} "
+              f"delta_achieved={_fmt(r.delta_achieved):>14} admissible={r.admissible} "
               f"sigma_star={r.sigma_star} dual={r.dual_status}")
 
     retained = retained_degree_record(records)
