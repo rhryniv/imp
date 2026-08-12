@@ -1,20 +1,24 @@
 """Stage 3 driver (scattering/driver.py, spec Sec. 6 / Sec. 9 deliverable
 2): validation (rule 7), the gamma/n_min_green closed-form (Sec. 5.4),
-the rule-4 retention logic, CSV/LaTeX output, and one live (slow) degree
-run end to end through direct.py + certify.py + dual_certify.py together.
+the rule-4 retention logic, the stop_at_first_admissible early exit,
+CSV/LaTeX output, and one live (slow) degree run end to end through
+direct.py + certify.py + dual_certify.py together.
 
 Run: python3 -m pytest tests/test_stage3_driver.py -v   (from repo root)
 """
 import csv
 import json
 import os
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
+import scattering.driver as driver
 from scattering.driver import (
     DegreeRecord, validate_intervals, gamma_geometric, n_min_green,
     retained_degree_record, save_records_csv, save_records_latex, run_degree_stage3,
+    degree_scan_stage3, find_retained_design_stage3,
 )
 
 
@@ -118,6 +122,79 @@ def test_retained_degree_record_picks_least_admissible_n_not_least_delta():
     ret = retained_degree_record(records)
     assert ret is not None
     assert ret.n == 4
+
+
+# --------------------------------------------------------------------------
+# stop_at_first_admissible: lossless early exit (rule 4 + rule 5 together
+# already guarantee the first admissible record found, scanning
+# increasing n, IS the retained answer -- see driver.py's own docstring).
+# run_degree_stage3 is mocked out here so these are fast, deterministic
+# checks of the LOOP logic itself, not another real SLSQP/SDP solve.
+# --------------------------------------------------------------------------
+
+def _make_fake_run_degree_stage3(admissible_at: set, calls: list):
+    def fake(n, I0, I1, N_max, eps0, eps1, smaller_solutions=None, N_values=(), seed=0):
+        calls.append((n, dict(smaller_solutions or {})))
+        return _fake_record(n, admissible=(n in admissible_at), delta_achieved=1.0)
+    return fake
+
+
+def test_stop_at_first_admissible_halts_the_loop():
+    calls = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3({5}, calls)):
+        records = degree_scan_stage3(range(2, 11), [(0.5, 1.0)], [(2.0, 2.5)], 20, 1e-2, 1e-2,
+                                      stop_at_first_admissible=True)
+    assert [r.n for r in records] == [2, 3, 4, 5]     # stopped right after n=5
+    assert records[-1].admissible is True
+    assert [n for n, _ in calls] == [2, 3, 4, 5]        # no work done for n=6..10
+
+
+def test_default_does_not_stop_early():
+    calls = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3({5}, calls)):
+        records = degree_scan_stage3(range(2, 11), [(0.5, 1.0)], [(2.0, 2.5)], 20, 1e-2, 1e-2)
+    assert [r.n for r in records] == list(range(2, 11))  # full range, default is False
+
+
+def test_stop_at_first_admissible_scans_whole_range_if_nothing_admissible():
+    calls = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3(set(), calls)):
+        records = degree_scan_stage3(range(2, 6), [(0.5, 1.0)], [(2.0, 2.5)], 20, 1e-2, 1e-2,
+                                      stop_at_first_admissible=True)
+    assert [r.n for r in records] == list(range(2, 6))
+    assert all(not r.admissible for r in records)
+
+
+def test_stop_at_first_admissible_still_threads_smaller_solutions():
+    """Warm-starting (rule 5) must still see every smaller degree already
+    scanned up to the stopping point, exactly as the full scan would."""
+    calls = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3({4}, calls)):
+        degree_scan_stage3(range(2, 8), [(0.5, 1.0)], [(2.0, 2.5)], 20, 1e-2, 1e-2,
+                            stop_at_first_admissible=True)
+    seen_smaller_solutions = {n: sorted(pool.keys()) for n, pool in calls}
+    assert seen_smaller_solutions[2] == []
+    assert seen_smaller_solutions[3] == [2]
+    assert seen_smaller_solutions[4] == [2, 3]
+
+
+def test_find_retained_design_stage3_returns_retained_and_truncated_records():
+    calls = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3({4}, calls)):
+        retained, records = find_retained_design_stage3(range(2, 9), [(0.5, 1.0)], [(2.0, 2.5)],
+                                                          20, 1e-2, 1e-2)
+    assert retained is not None
+    assert retained.n == 4
+    assert [r.n for r in records] == [2, 3, 4]
+
+
+def test_find_retained_design_stage3_none_scans_whole_range():
+    calls = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3(set(), calls)):
+        retained, records = find_retained_design_stage3(range(2, 6), [(0.5, 1.0)], [(2.0, 2.5)],
+                                                          20, 1e-2, 1e-2)
+    assert retained is None
+    assert [r.n for r in records] == list(range(2, 6))
 
 
 def test_retained_degree_record_none_when_nothing_admissible():

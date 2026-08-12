@@ -292,11 +292,30 @@ def run_degree_stage3(n: int, I0: Sequence[Interval], I1: Sequence[Interval], N_
 
 def degree_scan_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Sequence[Interval], N_max: float,
                         eps0: float, eps1: float, N_values: Sequence[int] = (),
-                        seed: int = 0) -> list[DegreeRecord]:
+                        seed: int = 0, stop_at_first_admissible: bool = False) -> list[DegreeRecord]:
     """Rule 5: scans n in INCREASING order (n_range is used as given --
     callers must pass it already sorted increasing), each degree's
     direct-design warm-started from every smaller degree's own retained
-    alpha already in the scan."""
+    alpha already in the scan.
+
+    `stop_at_first_admissible`: if True, the scan STOPS as soon as it
+    produces a record with `admissible=True`. This is LOSSLESS for rule
+    4's own purpose (finding the retained design): since the scan is
+    already in increasing n (rule 5) and retention is the LEAST
+    admissible degree (rule 4), the first admissible record found IS
+    that answer -- no larger, unscanned n could ever change it. Off by
+    default because degree_scan_stage3 is also used to build the full
+    deliverable-3 table/plots across the whole range, which need every
+    degree's record, not just the first success.
+
+    Confirmed empirically NOT to be a monotone predicate in n (Instance
+    1's own alternate-interval scan: n=3,4,5 admissible, n>=6 not), so
+    this is a plain early-exit on a linear scan, never a skip-ahead or
+    binary search -- those would risk reporting a wrong "least" degree.
+    When nothing in n_range is admissible, this scans the whole range
+    regardless (there is nothing to stop early for), identical to
+    stop_at_first_admissible=False.
+    """
     validate_intervals(I0, I1)
     records: list[DegreeRecord] = []
     smaller_solutions: dict[int, np.ndarray] = {}
@@ -306,7 +325,25 @@ def degree_scan_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Seque
         records.append(rec)
         if rec.status == "optimal" and rec.alpha is not None:
             smaller_solutions[n] = np.asarray(rec.alpha, dtype=float)
+        if stop_at_first_admissible and rec.admissible:
+            break
     return records
+
+
+def find_retained_design_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Sequence[Interval],
+                                 N_max: float, eps0: float, eps1: float, N_values: Sequence[int] = (),
+                                 seed: int = 0) -> tuple[DegreeRecord | None, list[DegreeRecord]]:
+    """Convenience for the common case -- "just find the retained design,
+    as fast as possible" -- rather than the full deliverable-3 table:
+    degree_scan_stage3 with stop_at_first_admissible=True, then
+    retained_degree_record on the (possibly much shorter) result.
+    Returns (retained, records); retained is None if nothing in n_range
+    is admissible, in which case records covers the WHOLE range (there
+    was nothing to stop early for), exactly as a plain degree_scan_stage3
+    call would have produced."""
+    records = degree_scan_stage3(n_range, I0, I1, N_max, eps0, eps1, N_values=N_values, seed=seed,
+                                  stop_at_first_admissible=True)
+    return retained_degree_record(records), records
 
 
 def retained_degree_record(records: Sequence[DegreeRecord]) -> DegreeRecord | None:
