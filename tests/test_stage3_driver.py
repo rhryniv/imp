@@ -29,13 +29,21 @@ def test_validate_intervals_accepts_a_valid_configuration():
 @pytest.mark.parametrize("I0,I1", [
     ([(-0.1, 0.5)], [(1.0, 2.0)]),          # out of [0,pi]
     ([(0.0, 0.5)], [(1.0, 2.0)]),           # 0 in I0
-    ([(0.5, 1.0)], [(2.0, np.pi)]),         # pi in I1
     ([(0.5, 1.5)], [(1.0, 2.0)]),           # overlapping
     ([(0.5, 1.0)], [(1.0, 2.0)]),           # touching, zero gap
 ])
 def test_validate_intervals_rejects_rule7_violations(I0, I1):
     with pytest.raises(ValueError):
         validate_intervals(I0, I1)
+
+
+def test_validate_intervals_allows_pi_in_I1():
+    """Manuscript revision (Task 6b): pi in I1 is no longer rejected at
+    validation time -- whether the gap at pi is actually closed (the
+    only way Phase 2 can produce a verified point there) is a per-design
+    question that constraint (E) enforces during optimisation, not
+    something I0/I1 alone can answer."""
+    validate_intervals([(0.5, 1.0)], [(2.0, np.pi)])  # must not raise
 
 
 # --------------------------------------------------------------------------
@@ -91,9 +99,11 @@ def _fake_record(n, admissible, delta_achieved):
     return DegreeRecord(
         n=n, status="optimal", underline_delta=1e-6, dual_ray_found=False,
         dual_status="dual_certified", dual_blocks_all_feasible=True,
-        delta_achieved=delta_achieved, kappa_min=1.5, mu_min=0.9, s_0=0.5,
+        delta_achieved=delta_achieved, kappa_min=1.5, mu_min=0.9,
+        max_kappa_B=0.7, s_0=0.5, Lambda=0.001,
         sigma_star=(-1,), kappa_min_by_sigma={(-1,): 1.5, (1,): 0.2}, admissible=admissible,
-        N_required=10.0, alpha=[0.1, -0.1], rho=[1.0, 1.1, 1.0], start_origin="phase1",
+        N_max=20, mu0=0.15, delta_target=1e-4, N_required=10.0,
+        alpha=[0.1, -0.1], rho=[1.0, 1.1, 1.0], start_origin="phase1",
         grid_vs_exact={"delta_discrepancy": 1e-8, "kappa_min_discrepancy": 1e-9},
         gamma=1.2, n_min_green=4.5, time_direct_s=0.1, time_sdp_s=0.1,
     )
@@ -134,6 +144,12 @@ def test_save_records_csv_and_latex_roundtrip(tmp_path):
     assert len(rows) == 2
     assert rows[0]["n"] == "3"
     assert json.loads(rows[0]["alpha"]) == [0.1, -0.1]
+    # manuscript revision fields: max_kappa_B is the rule-4 gate now, s_0
+    # and Lambda are reported diagnostics only, N_max/mu0/delta_target
+    # record the derived tolerances actually used.
+    for col in ("max_kappa_B", "s_0", "Lambda", "N_max", "mu0", "delta_target"):
+        assert col in rows[0], f"missing column {col!r}"
+    assert rows[0]["max_kappa_B"] == "0.7"
 
     with open(tex_path) as f:
         tex_lines = f.readlines()
@@ -152,9 +168,14 @@ def test_save_records_csv_and_latex_roundtrip(tmp_path):
 def test_run_degree_stage3_end_to_end_infeasible_case():
     I0 = [(np.pi / 6, np.pi / 4)]
     I1 = [(np.pi / 2, 2.5)]
-    rec = run_degree_stage3(1, I0, I1, 50.0, 1e-2, 1e-2, n_grid_B=30, n_grid_C=30)
+    # N_max=1 => mu0=log(400)/2 ~= 3.0 (mu0 used to be passed directly;
+    # it is now derived from N_max). n=1 CAN reach that depth (Phase 1
+    # succeeds), but not while also satisfying (B)+(E) on the pass band,
+    # so this exercises the phase2_infeasible path -- still a fast
+    # failure end to end, not a full multi-degree optimal search.
+    rec = run_degree_stage3(1, I0, I1, 1, 1e-2, 1e-2, n_grid_B=30, n_grid_C=30)
 
-    assert rec.status == "phase1_infeasible"
+    assert rec.status in ("phase1_infeasible", "phase2_infeasible")
     assert rec.delta_achieved is None
     assert rec.admissible is False
     # the dual side is a SEPARATE solve (dual_certify has no notion of

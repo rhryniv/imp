@@ -24,25 +24,26 @@ import json
 import numpy as np
 
 from scattering.forward import a_from_alphas, kappa_B, transmission_TN
-from scattering.driver import degree_scan_stage3, retained_degree_record, save_records_csv
+from scattering.driver import degree_scan_stage3, retained_degree_record, save_records_csv, mu0_from_N_max
 from scattering.plotting import plot_design_from_record, plot_bound_vs_achieved
 
 SEED_ALPHA = np.array([np.log(2.0), 0.0, -np.log(2.0)])  # F2 fixture
 I0 = [(1.4, 1.7)]
 I1 = [(0.05, 0.25)]
-MU0 = 0.5
 EPS0 = EPS1 = 1e-2
+N_MAX = 6  # manuscript revision: top-level input in place of mu_0; derived mu0=log(4/eps0)/(2*N_max)~=0.5
 N_RANGE = range(2, 9)
 
 
 def main():
+    mu0 = mu0_from_N_max(EPS0, N_MAX)
     a_seed = a_from_alphas(SEED_ALPHA)
     theta_probe = np.linspace(0, np.pi, 5)
     print("Seed structure kappa_B at a few points:", kappa_B(a_seed, theta_probe))
-    print(f"I0={I0}  I1={I1}  mu0={MU0}  (cosh(mu0)={np.cosh(MU0):.4f})")
+    print(f"I0={I0}  I1={I1}  N_max={N_MAX}  mu0={mu0:.4f}  (cosh(mu0)={np.cosh(mu0):.4f})")
     print()
 
-    records = degree_scan_stage3(N_RANGE, I0, I1, MU0, EPS0, EPS1, N_values=(5, 10, 20))
+    records = degree_scan_stage3(N_RANGE, I0, I1, N_MAX, EPS0, EPS1, N_values=(5, 10, 20))
     for r in records:
         print(f"n={r.n} status={r.status:18s} delta_achieved={r.delta_achieved} "
               f"kappa_min={r.kappa_min} s_0={r.s_0} admissible={r.admissible}")
@@ -67,7 +68,7 @@ def main():
     save_records_csv(records, "examples/manual_seed_demo_scan.csv")
     with open("examples/manual_seed_demo_scan.json", "w") as f:
         json.dump([r.to_json_dict() for r in records], f, indent=2)
-    plot_design_from_record(retained, I0, I1, N_values=(1, 3, 5, 10), mu0=MU0,
+    plot_design_from_record(retained, I0, I1, N_values=(1, 3, 5, 10), mu0=mu0,
                              savepath="examples/manual_seed_demo_design.png")
     plot_bound_vs_achieved(records, retained=retained, savepath="examples/manual_seed_demo_bound.png")
     print("\nSaved: examples/manual_seed_demo_scan.{csv,json}, "

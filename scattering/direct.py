@@ -317,13 +317,22 @@ def phase2_flatten(n: int, I0: Sequence[Interval], I1: Sequence[Interval], mu0: 
     """From the seed pool, solve the grid form of spec eq:direct by SQP
     with exact gradients:
 
-        min_{alpha,t} t   s.t.  Q(theta)-1 <= t          (theta in I1 grid)
-                              sigma_i*kappa(theta) >= cosh(mu0)  (theta in I0 grid)
+        min_{alpha,t} t   s.t.  Q(theta)-1 <= t                   (theta in I1 grid)   (B)
+                                sigma_i*kappa(theta) >= cosh(mu0)  (theta in I0 grid)   (C)
+                                -1 <= kappa(theta) <= 1            (theta in I1 grid)   (E)
 
     t IS delta directly (manuscript eq. 6.6's own convention, no
-    sqrt(u)-1 bookkeeping). Runs every named seed (no C-feasibility
-    screening); keeps the best (minimum delta) among converged, verified
-    results."""
+    sqrt(u)-1 bookkeeping). Constraint (E) is the manuscript revision
+    (see driver.py's own module docstring): it replaces the old
+    s_0-based pass-band admissibility test, which degenerates whenever
+    kappa_B touches +-1 in I1 -- confirmed directly on this project's own
+    Instance 1/2 scans, where s_0 came out negative at nearly every
+    degree despite excellent achieved T_N. (E) is convex/linear in the
+    design coefficients (manuscript Task 7), so it costs nothing extra
+    in kind here -- same grid, same exact gradient (dkappa, already
+    computed for (C)), just two more inequality rows per I1 grid point.
+    Runs every named seed (no C-feasibility screening); keeps the best
+    (minimum delta) among converged, verified results."""
     theta_B = list(theta_grid_B)
     theta_C = list(theta_grid_C)
     coshmu0 = np.cosh(mu0)
@@ -359,6 +368,41 @@ def phase2_flatten(n: int, I0: Sequence[Interval], I1: Sequence[Interval], mu0: 
 
         constraints.append({"type": "ineq", "fun": fun, "jac": jac})
 
+    for th in theta_B:
+        def fun_E_hi(x, th=th):
+            gamma_free, t = unpack(x)
+            alphas = _gamma_to_alphas(gamma_free)
+            kap = forward_with_grad(alphas, th)["kappa"]
+            return 1.0 - kap                              # (E): kappa_B <= 1
+
+        def jac_E_hi(x, th=th):
+            gamma_free, t = unpack(x)
+            alphas = _gamma_to_alphas(gamma_free)
+            res = forward_with_grad(alphas, th)
+            dkap_dgamma = grad_free_vars(res["dkappa"]) * _chain_rule_scale(gamma_free)[:, None]
+            J = np.zeros((len(th), len(x)))
+            J[:, :-1] = -dkap_dgamma.T
+            return J
+
+        constraints.append({"type": "ineq", "fun": fun_E_hi, "jac": jac_E_hi})
+
+        def fun_E_lo(x, th=th):
+            gamma_free, t = unpack(x)
+            alphas = _gamma_to_alphas(gamma_free)
+            kap = forward_with_grad(alphas, th)["kappa"]
+            return kap + 1.0                              # (E): kappa_B >= -1
+
+        def jac_E_lo(x, th=th):
+            gamma_free, t = unpack(x)
+            alphas = _gamma_to_alphas(gamma_free)
+            res = forward_with_grad(alphas, th)
+            dkap_dgamma = grad_free_vars(res["dkappa"]) * _chain_rule_scale(gamma_free)[:, None]
+            J = np.zeros((len(th), len(x)))
+            J[:, :-1] = dkap_dgamma.T
+            return J
+
+        constraints.append({"type": "ineq", "fun": fun_E_lo, "jac": jac_E_lo})
+
     for th, sig in zip(theta_C, sigma):
         def fun(x, th=th, sig=sig):
             gamma_free, t = unpack(x)
@@ -389,8 +433,10 @@ def phase2_flatten(n: int, I0: Sequence[Interval], I1: Sequence[Interval], mu0: 
             return False
         alphas = _gamma_to_alphas(gamma_free)
         for th in theta_B:
-            Q = forward_with_grad(alphas, th)["Q"]
-            if np.max(Q - 1.0) > t + tol:
+            res = forward_with_grad(alphas, th)
+            if np.max(res["Q"] - 1.0) > t + tol:
+                return False
+            if np.max(np.abs(res["kappa"])) > 1.0 + tol:  # (E)
                 return False
         for th, sig in zip(theta_C, sigma):
             kap = forward_with_grad(alphas, th)["kappa"]

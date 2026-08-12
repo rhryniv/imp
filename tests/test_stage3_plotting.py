@@ -49,8 +49,10 @@ def test_plot_design_from_record_matches_plot_design():
     rec = DegreeRecord(
         n=2, status="optimal", underline_delta=1e-3, dual_ray_found=False,
         dual_status="dual_certified", dual_blocks_all_feasible=True, delta_achieved=0.1,
-        kappa_min=1.5, mu_min=0.9, s_0=0.5, sigma_star=(-1,), kappa_min_by_sigma={},
-        admissible=False, N_required=10.0, alpha=list(ALPHA), rho=[1.0, 1.1, 1.0, 0.9],
+        kappa_min=1.5, mu_min=0.9, max_kappa_B=0.7, s_0=0.5, Lambda=0.02,
+        sigma_star=(-1,), kappa_min_by_sigma={},
+        admissible=False, N_max=20, mu0=0.15, delta_target=1e-4, N_required=10.0,
+        alpha=list(ALPHA), rho=[1.0, 1.1, 1.0, 0.9],
         start_origin="phase1", grid_vs_exact={}, gamma=1.2, n_min_green=3.0,
         time_direct_s=0.1, time_sdp_s=0.1,
     )
@@ -62,8 +64,10 @@ def test_plot_design_from_record_raises_without_alpha():
     rec = DegreeRecord(
         n=2, status="phase1_infeasible", underline_delta=None, dual_ray_found=True,
         dual_status="dual_ray_found", dual_blocks_all_feasible=True, delta_achieved=None,
-        kappa_min=None, mu_min=None, s_0=None, sigma_star=None, kappa_min_by_sigma={},
-        admissible=False, N_required=None, alpha=None, rho=None,
+        kappa_min=None, mu_min=None, max_kappa_B=None, s_0=None, Lambda=None,
+        sigma_star=None, kappa_min_by_sigma={},
+        admissible=False, N_max=20, mu0=0.15, delta_target=1e-4, N_required=None,
+        alpha=None, rho=None,
         start_origin=None, grid_vs_exact={}, gamma=None, n_min_green=None,
         time_direct_s=0.1, time_sdp_s=0.1,
     )
@@ -75,8 +79,10 @@ def _fake_record(n, ud, da, ng, admissible):
     return DegreeRecord(
         n=n, status="optimal", underline_delta=ud, dual_ray_found=False,
         dual_status="dual_certified", dual_blocks_all_feasible=True, delta_achieved=da,
-        kappa_min=1.5, mu_min=0.9, s_0=0.5, sigma_star=(-1,), kappa_min_by_sigma={},
-        admissible=admissible, N_required=10.0, alpha=[0.1, -0.1], rho=[1.0, 1.1, 1.0],
+        kappa_min=1.5, mu_min=0.9, max_kappa_B=0.7, s_0=0.5, Lambda=0.02,
+        sigma_star=(-1,), kappa_min_by_sigma={},
+        admissible=admissible, N_max=20, mu0=0.15, delta_target=1e-4, N_required=10.0,
+        alpha=[0.1, -0.1], rho=[1.0, 1.1, 1.0],
         start_origin="phase1", grid_vs_exact={}, gamma=1.2, n_min_green=ng,
         time_direct_s=0.1, time_sdp_s=0.1,
     )

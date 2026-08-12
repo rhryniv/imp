@@ -23,6 +23,45 @@ IMPORTANT, rule 4, in this driver's own terms: the RETAINED degree is the
 LEAST n with `admissible=True`, not the n with the smallest
 `delta_achieved` -- `retained_degree_record` implements exactly this, and
 callers should not substitute `min(records, key=delta_achieved)`.
+
+MANUSCRIPT REVISION (numerical-optimisation instructions applied to this
+codebase): the pass-band admissibility test used to be
+`delta <= s_0*eps_1/(1-eps_1)`, s_0 = min_{I1}(1-kappa_B^2). This
+degenerates whenever kappa_B touches +-1 inside I1 -- which good designs
+routinely do -- and was confirmed, directly on this project's own
+Instance 1 and Instance 2 scans, to reject designs at EVERY degree tried
+despite T_N being essentially perfect (min T_N over the pass band
+>=0.9999 at N up to several hundred) purely because s_0 came out
+negative. Root cause: the old test bounds |U_{N-1}(kappa_B)| by the
+N-INDEPENDENT quantity 1/sqrt(1-kappa_B^2), needed only if N is allowed
+to be unbounded; the actual use case has a known, finite block budget.
+
+Replaced by: a new datum `N_max` (the block budget) is the top-level
+input in place of `mu0`; `mu0` and `delta_target` are now DERIVED,
+
+    mu0          = log(4/eps0) / (2*N_max)                  (eq:mu0-def)
+    delta_target = eps1 / (N_max**2 * (1-eps1))              (eq:delta-def)
+
+and admissibility (rule 4) becomes: kappa_min>=cosh(mu0) AND
+max_{I1}|kappa_B|<=1 (constraint (E), enforced during Phase 2 --
+direct.py's own module docstring) AND delta<=delta_target. `s_0` (still
+certified exactly, unchanged) and the new `Lambda=max_{I1}
+(Q-1)/(1-kappa_B^2)` are kept as REPORTED DIAGNOSTICS only -- never a
+gate, never a hypothesis -- for comparison against the envelope bound
+they used to gate on.
+
+`N_required` (Sec. 6's own emission) is now the ceiling
+`N* = ceil(log(4/eps0)/(2*mu_min))`, the certified exponent's own
+window bound, replacing the old `arccosh(eps0**-0.5)/mu_min` (the two
+formulas are asymptotically equal for small eps0, but N* is the one this
+revision's algorithm Step 3 actually specifies).
+
+`n_min_green` (Sec. 5.4) previously used each degree's own achieved
+delta; per this revision it uses the fixed `delta_target` instead (the
+a priori bound is against the TARGET the design must clear, not against
+whatever delta a particular local optimum happened to reach) -- so it is
+now a single per-instance reference value, constant across the scan, not
+a curve that varies with n.
 """
 from __future__ import annotations
 
@@ -54,7 +93,15 @@ def _jsonable(x):
 
 def validate_intervals(I0: Sequence[Interval], I1: Sequence[Interval]) -> None:
     """Rule 7: I0, I1 subset of [0,pi], disjoint with a positive gap,
-    0 not in I0, pi not in I1."""
+    0 not in I0. `pi not in I1` is NO LONGER checked here (manuscript
+    revision, rem:endpoints/Task 6): under constraint (E), theta=pi may
+    belong to I1 only when the gap there is closed (p_1(-1)=+-1) --
+    Phase 2 simply cannot produce a verified point with pi in I1
+    otherwise, since (E) forces |kappa_B(pi)|<=1 while Remark rem:endpoints
+    (L=2n fixed) forces theta=pi into an OPEN gap (|kappa_B(pi)|>1)
+    whenever the gap isn't closed. No separate input-validation check is
+    needed or correct here, since whether the gap closes at pi depends on
+    the eventual design, not on I0/I1 alone."""
     all_intervals = [("I0", iv) for iv in I0] + [("I1", iv) for iv in I1]
     for name, (lo, hi) in all_intervals:
         if not (0.0 <= lo < hi <= np.pi):
@@ -62,14 +109,21 @@ def validate_intervals(I0: Sequence[Interval], I1: Sequence[Interval]) -> None:
     for lo, hi in I0:
         if lo <= 0.0 <= hi:
             raise ValueError(f"0 in I0 interval ({lo},{hi}) -- forbidden by rule 7")
-    for lo, hi in I1:
-        if lo <= np.pi <= hi:
-            raise ValueError(f"pi in I1 interval ({lo},{hi}) -- forbidden by rule 7")
     ordered = sorted(iv for _, iv in all_intervals)
     for (lo1, hi1), (lo2, hi2) in zip(ordered, ordered[1:]):
         if hi1 >= lo2:
             raise ValueError(f"I0/I1 intervals ({lo1},{hi1}) and ({lo2},{hi2}) are not disjoint "
                               "with a positive gap -- forbidden by rule 7")
+
+
+def mu0_from_N_max(eps0: float, N_max: float) -> float:
+    """eq:mu0-def: mu0 = log(4/eps0) / (2*N_max)."""
+    return float(np.log(4.0 / eps0) / (2.0 * N_max))
+
+
+def delta_target_from_N_max(eps1: float, N_max: float) -> float:
+    """eq:delta-def: delta_target = eps1 / (N_max^2 * (1-eps1))."""
+    return float(eps1 / (N_max ** 2 * (1.0 - eps1)))
 
 
 def gamma_geometric(I0: Sequence[Interval], I1: Sequence[Interval]) -> float | None:
@@ -101,7 +155,13 @@ def gamma_geometric(I0: Sequence[Interval], I1: Sequence[Interval]) -> float | N
 
 
 def n_min_green(gamma: float | None, mu0: float, delta: float | None) -> float | None:
-    """Spec Sec. 5.4: n_min_green = log(sinh^2(mu_0)/delta) / gamma."""
+    """Spec Sec. 5.4: n_min_green = log(sinh^2(mu_0)/delta) / gamma.
+
+    `delta` here means the TARGET (manuscript Task 11: "replace
+    occurrences of the old target by delta_target of eq:delta-def") --
+    callers should pass `delta_target`, not a per-degree achieved delta.
+    This makes n_min_green a single per-instance reference value
+    (constant across a degree scan), not a curve that varies with n."""
     if gamma is None or gamma <= 0.0 or delta is None or delta <= 0.0:
         return None
     ratio = np.sinh(mu0) ** 2 / delta
@@ -124,10 +184,15 @@ class DegreeRecord:
     delta_achieved: float | None          # certify_exact's own exact delta -- NOT the raw SQP/grid value
     kappa_min: float | None
     mu_min: float | None
-    s_0: float | None
+    max_kappa_B: float | None              # exact max_{I1}|kappa_B|; certifies constraint (E) -- a rule-4 GATE
+    s_0: float | None                      # exact min_{I1}(1-kappa_B^2); DIAGNOSTIC ONLY, not a gate (manuscript revision)
+    Lambda: float | None                   # exact max_{I1}(Q-1)/(1-kappa_B^2); DIAGNOSTIC ONLY; None means +infinity
     sigma_star: tuple | None
     kappa_min_by_sigma: dict
     admissible: bool
+    N_max: float                           # block budget (top-level input, manuscript revision)
+    mu0: float                             # derived: log(4/eps0)/(2*N_max), eq:mu0-def
+    delta_target: float                    # derived: eps1/(N_max^2*(1-eps1)), eq:delta-def
     N_required: float | None
     alpha: list | None
     rho: list | None                       # impedances
@@ -142,7 +207,7 @@ class DegreeRecord:
         return _jsonable(asdict(self))
 
 
-def run_degree_stage3(n: int, I0: Sequence[Interval], I1: Sequence[Interval], mu0: float,
+def run_degree_stage3(n: int, I0: Sequence[Interval], I1: Sequence[Interval], N_max: float,
                        eps0: float, eps1: float,
                        smaller_solutions: dict[int, np.ndarray] | None = None,
                        N_values: Sequence[int] = (), seed: int = 0,
@@ -153,7 +218,14 @@ def run_degree_stage3(n: int, I0: Sequence[Interval], I1: Sequence[Interval], mu
     explicit dual certificate for the magnitude SDP bound. Every field is
     reported even on failure (None/False/empty as appropriate), so a
     failed degree is still a row in the emitted table, not a silent gap.
+
+    `N_max` (the block budget) is the top-level input (manuscript
+    revision, this module's own docstring); `mu0` and `delta_target` are
+    derived from it and `eps0`/`eps1` here, not supplied directly.
     """
+    mu0 = mu0_from_N_max(eps0, N_max)
+    delta_target = delta_target_from_N_max(eps1, N_max)
+
     t0 = time.time()
     direct_res = design_direct_literal(n, I0, I1, mu0, smaller_solutions=smaller_solutions,
                                         n_grid_B=n_grid_B, n_grid_C=n_grid_C, seed=seed)
@@ -180,35 +252,45 @@ def run_degree_stage3(n: int, I0: Sequence[Interval], I1: Sequence[Interval], mu
     delta_achieved = cert.delta if cert is not None else None
     kappa_min = cert.kappa_min if cert is not None else None
     mu_min = cert.mu_min if cert is not None else None
+    max_kappa_B = cert.max_kappa_B if cert is not None else None
     s_0 = cert.s_0 if cert is not None else None
+    Lambda = cert.Lambda if cert is not None else None
 
+    # N* = ceil(log(4/eps0)/(2*mu_min)): algorithm Step 3's own window
+    # bound, using the CERTIFIED mu_min (>=mu0 by the retention test),
+    # not the target mu0 -- replaces the old arccosh(eps0**-1/2)/mu_min.
     N_required = None
     if mu_min is not None and mu_min > 0.0:
-        N_required = float(np.arccosh(eps0 ** -0.5) / mu_min)
+        N_required = float(np.ceil(np.log(4.0 / eps0) / (2.0 * mu_min)))
 
+    # Rule 4 (manuscript revision): s_0 is NO LONGER a gate. Admissible
+    # means kappa_min>=cosh(mu0) AND max_{I1}|kappa_B|<=1 (constraint (E))
+    # AND delta<=delta_target.
     admissible = False
-    if kappa_min is not None and delta_achieved is not None and s_0 is not None and s_0 > 0.0:
+    if kappa_min is not None and delta_achieved is not None and max_kappa_B is not None:
         cosh_mu0 = float(np.cosh(mu0))
         admissible = (kappa_min >= cosh_mu0 - admissible_tol
-                      and delta_achieved <= s_0 * eps1 / (1.0 - eps1) + admissible_tol)
+                      and max_kappa_B <= 1.0 + admissible_tol
+                      and delta_achieved <= delta_target + admissible_tol)
 
     gamma = gamma_geometric(I0, I1)
-    n_min_green_val = n_min_green(gamma, mu0, delta_achieved)
+    n_min_green_val = n_min_green(gamma, mu0, delta_target)  # fixed target, not delta_achieved -- see module docstring
 
     return DegreeRecord(
         n=n, status=direct_res.status,
         underline_delta=dual_res.underline_delta, dual_ray_found=dual_res.dual_ray_found,
         dual_status=dual_res.status, dual_blocks_all_feasible=dual_blocks_all_feasible,
-        delta_achieved=delta_achieved, kappa_min=kappa_min, mu_min=mu_min, s_0=s_0,
+        delta_achieved=delta_achieved, kappa_min=kappa_min, mu_min=mu_min,
+        max_kappa_B=max_kappa_B, s_0=s_0, Lambda=Lambda,
         sigma_star=sigma_star, kappa_min_by_sigma=direct_res.kappa_min_by_sigma,
-        admissible=admissible, N_required=N_required,
+        admissible=admissible, N_max=N_max, mu0=mu0, delta_target=delta_target, N_required=N_required,
         alpha=alpha, rho=rho, start_origin=direct_res.start_origin,
         grid_vs_exact=grid_vs_exact_diag, gamma=gamma, n_min_green=n_min_green_val,
         time_direct_s=time_direct_s, time_sdp_s=time_sdp_s,
     )
 
 
-def degree_scan_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Sequence[Interval], mu0: float,
+def degree_scan_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Sequence[Interval], N_max: float,
                         eps0: float, eps1: float, N_values: Sequence[int] = (),
                         seed: int = 0) -> list[DegreeRecord]:
     """Rule 5: scans n in INCREASING order (n_range is used as given --
@@ -219,7 +301,7 @@ def degree_scan_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Seque
     records: list[DegreeRecord] = []
     smaller_solutions: dict[int, np.ndarray] = {}
     for n in n_range:
-        rec = run_degree_stage3(n, I0, I1, mu0, eps0, eps1,
+        rec = run_degree_stage3(n, I0, I1, N_max, eps0, eps1,
                                  smaller_solutions=smaller_solutions, N_values=N_values, seed=seed)
         records.append(rec)
         if rec.status == "optimal" and rec.alpha is not None:
@@ -244,9 +326,10 @@ def save_records_csv(records: Sequence[DegreeRecord], path: str) -> None:
     cell rather than dropped, so the CSV is a complete record."""
     import json
     scalar_fields = ["n", "status", "underline_delta", "dual_ray_found", "dual_status",
-                      "dual_blocks_all_feasible", "delta_achieved", "kappa_min", "mu_min", "s_0",
-                      "sigma_star", "admissible", "N_required", "start_origin", "gamma", "n_min_green",
-                      "time_direct_s", "time_sdp_s"]
+                      "dual_blocks_all_feasible", "delta_achieved", "kappa_min", "mu_min",
+                      "max_kappa_B", "s_0", "Lambda",
+                      "sigma_star", "admissible", "N_max", "mu0", "delta_target", "N_required",
+                      "start_origin", "gamma", "n_min_green", "time_direct_s", "time_sdp_s"]
     vector_fields = ["alpha", "rho", "kappa_min_by_sigma", "grid_vs_exact"]
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
@@ -276,7 +359,8 @@ def save_records_latex(records: Sequence[DegreeRecord], path: str) -> None:
         cells = [
             str(rec.n), rec.status.replace("_", r"\_"),
             fmt(rec.underline_delta), fmt(rec.delta_achieved),
-            fmt(rec.kappa_min), fmt(rec.mu_min), fmt(rec.s_0),
+            fmt(rec.kappa_min), fmt(rec.mu_min), fmt(rec.max_kappa_B),
+            fmt(rec.s_0), fmt(rec.Lambda),
             sigma_str, fmt(rec.admissible), fmt(rec.N_required, sig=4),
             fmt(rec.gamma), fmt(rec.n_min_green, sig=4),
         ]

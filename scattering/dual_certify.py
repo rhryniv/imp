@@ -48,6 +48,18 @@ constructed independently of, and not read off from, CVXPY's own
 `Y.dual_value` for the primal `Y >> 0` constraint (which lives in a
 different, DOF-collapsed convention for symmetric-matrix duals -- see
 scratchpad audit -- and is not used here at all).
+
+MANUSCRIPT REVISION note (Task 8, applied here per rem:certificate's own
+closing remark): constraint (E), -1<=kappa_B<=1 on I1 (driver.py's own
+module docstring has the full account), is -- like (C) -- a constraint
+on the PHASE of p_1, not on |q~_1|^2=Q alone, so it is dropped when
+passing to this magnitude relaxation exactly as (C) is dropped in favour
+of (C'). This solver's own constraint set (A, B, C', D') is therefore
+UNCHANGED by the revision: no code here needed to change for (E). Since
+the relaxation with (E) omitted is still a relaxation of the true
+feasible set (dropping a constraint can only enlarge it), the dual
+bounds `underline_delta` computed here remain valid lower bounds on
+`delta_n*` regardless.
 """
 from __future__ import annotations
 

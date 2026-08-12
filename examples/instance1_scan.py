@@ -1,7 +1,11 @@
 """Instance 1 (spec Sec. 7, m_0 = m_1 = 1): the Stage 3 degree scan,
 n = 2..16, I_0 = [pi/6, pi/4], I_1 = [pi/2, b] with b = 3*pi/4 (< pi, per
 the spec's own note that b=pi now fails rule 7 since L=2n is fixed;
-b=3*pi/4 chosen by RH), mu_0 = 0.05, eps_0 = eps_1 = 1e-2.
+b=3*pi/4 chosen by RH), eps_0 = eps_1 = 1e-2, N_max = 60 (manuscript
+revision: N_max is now the top-level input in place of mu_0 -- see
+driver.py's own module docstring -- chosen so the derived
+mu0=log(4/eps0)/(2*N_max) ~= 0.05, the spec's original mu_0, for
+comparability with the pre-revision run).
 
 Produces the Sec. 6 emissions table (CSV + LaTeX table body, deliverable
 2), the two deliverable-3 plots (kappa_B/T_N for the retained design;
@@ -15,13 +19,15 @@ import time
 
 import numpy as np
 
-from scattering.driver import degree_scan_stage3, retained_degree_record, save_records_csv, save_records_latex
+from scattering.driver import (
+    degree_scan_stage3, retained_degree_record, save_records_csv, save_records_latex, mu0_from_N_max,
+)
 from scattering.plotting import plot_design_from_record, plot_bound_vs_achieved
 
 I0 = [(np.pi / 6, np.pi / 4)]
 I1 = [(np.pi / 2, 3 * np.pi / 4)]
-MU0 = 0.05
 EPS0 = EPS1 = 1e-2
+N_MAX = 60
 N_RANGE = range(2, 17)
 N_VALUES = (20, 40, 60, 80, 100)
 
@@ -32,7 +38,7 @@ def _fmt(x):
 
 def main():
     t0 = time.time()
-    records = degree_scan_stage3(N_RANGE, I0, I1, MU0, EPS0, EPS1, N_values=N_VALUES)
+    records = degree_scan_stage3(N_RANGE, I0, I1, N_MAX, EPS0, EPS1, N_values=N_VALUES)
     print(f"scan finished in {time.time() - t0:.1f}s")
 
     for r in records:
@@ -58,7 +64,7 @@ def main():
     plot_source = retained if retained is not None else next(
         (r for r in reversed(records) if r.status == "optimal" and r.alpha is not None), None)
     if plot_source is not None:
-        plot_design_from_record(plot_source, I0, I1, N_values=(1, 3, 5), mu0=MU0,
+        plot_design_from_record(plot_source, I0, I1, N_values=(1, 3, 5), mu0=mu0_from_N_max(EPS0, N_MAX),
                                  savepath="examples/instance1_design.png")
         print(f"design plot uses n={plot_source.n} "
               f"({'retained' if retained is not None else 'best available, none admissible'})")

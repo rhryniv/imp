@@ -15,18 +15,17 @@ scan, with n_min_green marked."
   plot_bound_vs_achieved  -- underline_delta(n) vs delta_achieved(n)
                              across a degree_scan_stage3 scan.
 
-"n_min_green marked": the spec's own formula (Sec. 5.4) makes
-n_min_green a function of delta, not of n directly, so there is no single
-canonical way to overlay it on an n-indexed scan plot. Two readings are
-both defensible, and both are cheap to provide, so both are drawn rather
-than picking one: (1) n_min_green(delta_achieved(n)) as its own curve,
-letting the reader compare each achieved degree against what the
-Sec. 5.4 estimate would predict for that degree's own delta; (2) a
-vertical marker at n_min_green evaluated at the RETAINED design's own
-delta_achieved, the single reference point most directly comparable to
-"the degree actually retained." This is a code-authority presentation
-choice (spec Sec. 8), not a non-negotiable, so it is documented here
-rather than silently picked.
+"n_min_green marked": the spec's own formula (Sec. 5.4) makes n_min_green
+a function of a delta TARGET, not of n directly. Originally ambiguous
+here (whether "delta" meant each degree's own achieved delta or a fixed
+target), resolved by the manuscript revision (driver.py's own module
+docstring, Task 11): driver.n_min_green is now called with the fixed
+`delta_target`, so it is a single per-instance reference value, constant
+across the scan -- both curves drawn below (the flat "curve" across n,
+and the vertical marker at the retained record's own value) now
+necessarily coincide; both are kept since a flat reference line and a
+single vertical marker read differently at a glance, not because the
+underlying quantity is still ambiguous.
 """
 from __future__ import annotations
 

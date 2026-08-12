@@ -1,5 +1,16 @@
 # Run log: spec Sec. 8 decisions
 
+**Superseded in part by the manuscript revision** (see driver.py's own
+module docstring for the full account): the pass-band admissibility test
+this log's items 4-6 describe as using `s_0` is no longer how `admissible`
+is computed (that gate is now `max_kappa_B<=1` + `delta<=delta_target`,
+`s_0` kept only as a diagnostic), `mu0` is now derived from a top-level
+`N_max` rather than supplied directly, and the `N_required` formula
+changed from `arccosh(eps0**-0.5)/mu_min` to
+`ceil(log(4/eps0)/(2*mu_min))`. This log is left as-is below as an
+accurate record of the decisions made AT THE TIME under the original
+formulation; it is not rewritten to match the revision.
+
 codespec6.4.md Sec. 8 ("Where the code has authority") lists six points
 where the spec asks for "a recommendation with evidence; the manuscript
 follows," rather than a literal prescription. This log records the
