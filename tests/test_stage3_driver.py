@@ -133,10 +133,32 @@ def test_retained_degree_record_picks_least_admissible_n_not_least_delta():
 # --------------------------------------------------------------------------
 
 def _make_fake_run_degree_stage3(admissible_at: set, calls: list):
-    def fake(n, I0, I1, N_max, eps0, eps1, smaller_solutions=None, N_values=(), seed=0):
-        calls.append((n, dict(smaller_solutions or {})))
+    def fake(n, I0, I1, N_max, eps0, eps1, smaller_solutions=None, N_values=(), seed=0,
+             n_grid_B=200, n_grid_C=200):
+        calls.append((n, dict(smaller_solutions or {}), n_grid_B, n_grid_C))
         return _fake_record(n, admissible=(n in admissible_at), delta_achieved=1.0)
     return fake
+
+
+def test_n_grid_defaults_to_200():
+    calls = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3({2}, calls)):
+        degree_scan_stage3(range(2, 4), [(0.5, 1.0)], [(2.0, 2.5)], 20, 1e-2, 1e-2)
+    assert all(n_grid_B == 200 and n_grid_C == 200 for _, _, n_grid_B, n_grid_C in calls)
+
+
+def test_n_grid_passthrough_to_run_degree_stage3():
+    calls = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3({2}, calls)):
+        degree_scan_stage3(range(2, 4), [(0.5, 1.0)], [(2.0, 2.5)], 20, 1e-2, 1e-2,
+                            n_grid_B=25, n_grid_C=25)
+    assert all(n_grid_B == 25 and n_grid_C == 25 for _, _, n_grid_B, n_grid_C in calls)
+
+    calls2 = []
+    with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3({2}, calls2)):
+        find_retained_design_stage3(range(2, 4), [(0.5, 1.0)], [(2.0, 2.5)], 20, 1e-2, 1e-2,
+                                     n_grid_B=25, n_grid_C=25)
+    assert all(n_grid_B == 25 and n_grid_C == 25 for _, _, n_grid_B, n_grid_C in calls2)
 
 
 def test_stop_at_first_admissible_halts_the_loop():
@@ -146,7 +168,7 @@ def test_stop_at_first_admissible_halts_the_loop():
                                       stop_at_first_admissible=True)
     assert [r.n for r in records] == [2, 3, 4, 5]     # stopped right after n=5
     assert records[-1].admissible is True
-    assert [n for n, _ in calls] == [2, 3, 4, 5]        # no work done for n=6..10
+    assert [n for n, *_ in calls] == [2, 3, 4, 5]        # no work done for n=6..10
 
 
 def test_default_does_not_stop_early():
@@ -172,7 +194,7 @@ def test_stop_at_first_admissible_still_threads_smaller_solutions():
     with patch.object(driver, "run_degree_stage3", _make_fake_run_degree_stage3({4}, calls)):
         degree_scan_stage3(range(2, 8), [(0.5, 1.0)], [(2.0, 2.5)], 20, 1e-2, 1e-2,
                             stop_at_first_admissible=True)
-    seen_smaller_solutions = {n: sorted(pool.keys()) for n, pool in calls}
+    seen_smaller_solutions = {n: sorted(pool.keys()) for n, pool, *_ in calls}
     assert seen_smaller_solutions[2] == []
     assert seen_smaller_solutions[3] == [2]
     assert seen_smaller_solutions[4] == [2, 3]

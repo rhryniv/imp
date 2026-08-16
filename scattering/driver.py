@@ -292,7 +292,8 @@ def run_degree_stage3(n: int, I0: Sequence[Interval], I1: Sequence[Interval], N_
 
 def degree_scan_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Sequence[Interval], N_max: float,
                         eps0: float, eps1: float, N_values: Sequence[int] = (),
-                        seed: int = 0, stop_at_first_admissible: bool = False) -> list[DegreeRecord]:
+                        seed: int = 0, stop_at_first_admissible: bool = False,
+                        n_grid_B: int = 200, n_grid_C: int = 200) -> list[DegreeRecord]:
     """Rule 5: scans n in INCREASING order (n_range is used as given --
     callers must pass it already sorted increasing), each degree's
     direct-design warm-started from every smaller degree's own retained
@@ -315,13 +316,27 @@ def degree_scan_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Seque
     When nothing in n_range is admissible, this scans the whole range
     regardless (there is nothing to stop early for), identical to
     stop_at_first_admissible=False.
+
+    `n_grid_B`/`n_grid_C`: passed through to design_direct_literal (M,
+    spec Sec. 8's own bullet), i.e. the SQP's own grid for posing (B),
+    (C), (E), and the grid its own verify() checks against -- NOT the
+    certification step, which is exact regardless of this setting
+    (certify.py's Chebyshev-colleague-matrix rootfinding, not a grid at
+    all): shrinking M only risks Phase 2 reporting "optimal" on a point
+    with a small excursion between grid nodes, which certify_exact still
+    catches and correctly reflects in `admissible` -- it cannot turn a
+    genuinely inadmissible design into an admissible one. Lowering M is
+    therefore a pure speed/reliability trade on how OFTEN Phase 2 finds
+    (and correctly verifies, on its own coarser grid) a good point, not
+    a risk to the correctness of what gets reported.
     """
     validate_intervals(I0, I1)
     records: list[DegreeRecord] = []
     smaller_solutions: dict[int, np.ndarray] = {}
     for n in n_range:
         rec = run_degree_stage3(n, I0, I1, N_max, eps0, eps1,
-                                 smaller_solutions=smaller_solutions, N_values=N_values, seed=seed)
+                                 smaller_solutions=smaller_solutions, N_values=N_values, seed=seed,
+                                 n_grid_B=n_grid_B, n_grid_C=n_grid_C)
         records.append(rec)
         if rec.status == "optimal" and rec.alpha is not None:
             smaller_solutions[n] = np.asarray(rec.alpha, dtype=float)
@@ -332,7 +347,8 @@ def degree_scan_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Seque
 
 def find_retained_design_stage3(n_range: Sequence[int], I0: Sequence[Interval], I1: Sequence[Interval],
                                  N_max: float, eps0: float, eps1: float, N_values: Sequence[int] = (),
-                                 seed: int = 0) -> tuple[DegreeRecord | None, list[DegreeRecord]]:
+                                 seed: int = 0, n_grid_B: int = 200, n_grid_C: int = 200,
+                                 ) -> tuple[DegreeRecord | None, list[DegreeRecord]]:
     """Convenience for the common case -- "just find the retained design,
     as fast as possible" -- rather than the full deliverable-3 table:
     degree_scan_stage3 with stop_at_first_admissible=True, then
@@ -342,7 +358,7 @@ def find_retained_design_stage3(n_range: Sequence[int], I0: Sequence[Interval], 
     was nothing to stop early for), exactly as a plain degree_scan_stage3
     call would have produced."""
     records = degree_scan_stage3(n_range, I0, I1, N_max, eps0, eps1, N_values=N_values, seed=seed,
-                                  stop_at_first_admissible=True)
+                                  stop_at_first_admissible=True, n_grid_B=n_grid_B, n_grid_C=n_grid_C)
     return retained_degree_record(records), records
 
 
