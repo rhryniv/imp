@@ -1,0 +1,124 @@
+{
+  "1": {
+    "ok": true,
+    "delta": "0.2369589283664515668559215426317659409143",
+    "ratio": "3.6487865669951",
+    "beta_n": "0.0649418440941026",
+    "feasible": true,
+    "worst_slack": {
+      "A": 0.8090283869541336,
+      "B": -1.5381161883396158e-52,
+      "C": 2.1270018457999288e-50
+    },
+    "source": "grid-LP active set",
+    "time_s": 4.685401678085327
+  },
+  "2": {
+    "ok": true,
+    "delta": "0.04065572465689367135442251690372259133885",
+    "ratio": "13.3136434114839",
+    "beta_n": "0.00305368886640192",
+    "feasible": true,
+    "worst_slack": {
+      "A": 1.800463502368277e-62,
+      "B": -1.3223803644364189e-51,
+      "C": 2.6878001626482657e-50
+    },
+    "source": "grid-LP active set",
+    "time_s": 0.3415944576263428
+  },
+  "3": {
+    "ok": true,
+    "delta": "0.0005742415920014410907772613936829628746026",
+    "ratio": "3.99916838412965",
+    "beta_n": "0.000143590250983247",
+    "feasible": true,
+    "worst_slack": {
+      "A": 3.984195102601737e-08,
+      "B": -4.098780537357009e-62,
+      "C": 1.9104656903033705e-58
+    },
+    "source": "grid-LP active set",
+    "time_s": 0.42251110076904297
+  },
+  "4": {
+    "ok": true,
+    "delta": "0.00004787171170276385077035343358780205495984",
+    "ratio": "7.09012403552593",
+    "beta_n": "6.75188635105632e-6",
+    "feasible": true,
+    "worst_slack": {
+      "A": 0.0,
+      "B": -5.08194732356546e-63,
+      "C": 0.0
+    },
+    "source": "grid-LP active set",
+    "time_s": 0.5177817344665527
+  },
+  "5": {
+    "ok": true,
+    "delta": "0.000001269945501896185693478510218562330302998",
+    "ratio": "3.99999816096209",
+    "beta_n": "3.17486521441484e-7",
+    "feasible": true,
+    "worst_slack": {
+      "A": 8.049322601382352e-11,
+      "B": -5.178872920955227e-63,
+      "C": 1.5557538194652854e-61
+    },
+    "source": "grid-LP active set",
+    "time_s": 0.6521382331848145
+  },
+  "6": {
+    "ok": true,
+    "delta": "0.00000008710324180798875507041323595508331353813",
+    "ratio": "5.83457003755344",
+    "beta_n": "1.49288193041407e-8",
+    "feasible": true,
+    "worst_slack": {
+      "A": -1.9446922743316068e-62,
+      "B": -4.3900649296599744e-64,
+      "C": 0.0
+    },
+    "source": "grid-LP active set",
+    "time_s": 2.0013954639434814
+  },
+  "7": {
+    "ok": false,
+    "reason": "Could not find root within given tolerance. (1.43713740039584078551537761903540863148350565404378060082490985603e-44 > 9.99999999999999999999999999999999999999999999999999999999999961026e-46)\nTry another starting point or tweak arguments.",
+    "source": "extrapolated rule + continuation seed",
+    "time_s": 7.723272800445557
+  },
+  "8": {
+    "ok": true,
+    "delta": "-7.487678869582407751109313501119779666747e-49",
+    "ratio": "-2.26840925670231e-38",
+    "beta_n": "3.30085007696874e-11",
+    "feasible": false,
+    "worst_slack": {
+      "A": -2.4047827287961865e-07,
+      "B": -2.367576791609684e-46,
+      "C": -5.621476355938502e-45
+    },
+    "source": "extrapolated rule + continuation seed",
+    "time_s": 9.363540410995483
+  },
+  "9": {
+    "ok": false,
+    "reason": "Could not find root within given tolerance. (1.23685995918510190306650885687530749211510193784111249758069420737e-26 > 9.99999999999999999999999999999999999999999999999999999999999961026e-46)\nTry another starting point or tweak arguments.",
+    "source": "extrapolated rule + continuation seed",
+    "time_s": 60.506675004959106
+  },
+  "10": {
+    "ok": false,
+    "reason": "Could not find root within given tolerance. (1.48921467585785137499841650976204321677988062068335328102421120737e-22 > 9.99999999999999999999999999999999999999999999999999999999999961026e-46)\nTry another starting point or tweak arguments.",
+    "source": "extrapolated rule + continuation seed",
+    "time_s": 60.02062201499939
+  },
+  "11": {
+    "ok": false,
+    "reason": "Could not find root within given tolerance. (7.24091070250822626630154414404507032694715572221265691202074410506e-41 > 9.99999999999999999999999999999999999999999999999999999999999961026e-46)\nTry another starting point or tweak arguments.",
+    "source": "extrapolated rule + continuation seed",
+    "time_s": 54.01929593086243
+  }
+}
