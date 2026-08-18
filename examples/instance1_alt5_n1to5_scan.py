@@ -6,9 +6,11 @@ rem:endpoints, L=2n fixed, unless the design closes it) -- the same
 "pass near 0, stop near pi" placement that worked well in
 instance1_alt4_coarse_grid_early_stop_scan.py.
 
-RH's own request: only n=1..5 (not the usual n=2..16), and M=25
-(n_grid_B=n_grid_C=25) plus the stop_at_first_admissible early exit
-(driver.find_retained_design_stage3).
+RH's own request: only n=1..5 (not the usual n=2..16), M=25
+(n_grid_B=n_grid_C=25), and EVERY degree in that range reported --
+stop_at_first_admissible is deliberately OFF here (degree_scan_stage3
+directly, not find_retained_design_stage3) so n=1..5 are all computed
+regardless of whether an earlier one is already admissible.
 
 eps_0=eps_1=1e-2, N_max=60 (mu0=log(4/eps0)/(2*N_max)~=0.05).
 
@@ -19,7 +21,9 @@ import time
 
 import numpy as np
 
-from scattering.driver import find_retained_design_stage3, save_records_csv, save_records_latex, mu0_from_N_max
+from scattering.driver import (
+    degree_scan_stage3, retained_degree_record, save_records_csv, save_records_latex, mu0_from_N_max,
+)
 from scattering.plotting import plot_design_from_record, plot_bound_vs_achieved
 
 I0 = [(3 * np.pi / 4, np.pi)]
@@ -38,8 +42,8 @@ def _fmt(x):
 
 def main():
     t0 = time.time()
-    retained, records = find_retained_design_stage3(N_RANGE, I0, I1, N_MAX, EPS0, EPS1, N_values=N_VALUES,
-                                                      n_grid_B=N_GRID_B, n_grid_C=N_GRID_C)
+    records = degree_scan_stage3(N_RANGE, I0, I1, N_MAX, EPS0, EPS1, N_values=N_VALUES,
+                                  n_grid_B=N_GRID_B, n_grid_C=N_GRID_C)
     elapsed = time.time() - t0
     print(f"scan finished in {elapsed:.1f}s, {len(records)} degree(s) computed "
           f"(of {len(list(N_RANGE))} in the requested range), M={N_GRID_B}/{N_GRID_C}")
@@ -51,8 +55,9 @@ def main():
               f"time_direct_s={r.time_direct_s:.1f}")
 
     print()
+    retained = retained_degree_record(records)
     if retained is None:
-        print("No degree in the requested range is admissible (rule 4) -- full range was scanned.")
+        print("No degree in the requested range is admissible (rule 4).")
     else:
         print(f"Retained (least admissible n): n={retained.n}, delta_achieved={retained.delta_achieved}, "
               f"sigma_star={retained.sigma_star}, max_kappa_B={retained.max_kappa_B}")
