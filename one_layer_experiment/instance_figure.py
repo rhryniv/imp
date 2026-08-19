@@ -1,6 +1,9 @@
 """Task 3 figure: kappa_B and T_N (N=2,8,16) for the s=1 instance.
-Built from transfer_matrix.py's matrix machinery. Two stacked panels,
-B&W-safe line styles, PDF (vector) + PNG output.
+Built from transfer_matrix.py's matrix machinery. Same visual style as
+plot_kappa_TN.py (the earlier figure for this project): full-height
+axvspan shading for I0/I1, title, sequential-blue solid lines, same
+sizing -- kept consistent rather than switching to a separate
+paper-column layout. PDF (vector) + PNG output.
 """
 from __future__ import annotations
 
@@ -15,11 +18,10 @@ T, U = np.pi / 4, 3 * np.pi / 4
 L = 2
 S = 1.0
 N_VALUES = [2, 8, 16]
-LINESTYLES = {2: "-", 8: "--", 16: ":"}
-COLORS = {2: "#9EC9F0", 8: "#3A86D6", 16: "#0B3D80"}
+N_COLORS = {2: "#9EC9F0", 8: "#3A86D6", 16: "#0B3D80"}  # sequential ramp, light->dark by N
 
-PASS_COLOR = "#4a7a45"
-STOP_COLOR = "#a06a2a"
+STOP_TINT = "#FBE8D6"   # light amber
+PASS_TINT = "#DCEEDB"   # light green
 
 
 def field_arrays(s, grid):
@@ -34,22 +36,14 @@ def field_arrays(s, grid):
     return kap, q2abs2
 
 
-def mark_bands(ax, y_bar):
-    ax.plot([0, T], [y_bar, y_bar], color=PASS_COLOR, linewidth=4, solid_capstyle="butt", clip_on=False)
-    ax.plot([U, np.pi], [y_bar, y_bar], color=STOP_COLOR, linewidth=4, solid_capstyle="butt", clip_on=False)
-    ax.text(T / 2, y_bar, r"$I_1$", color=PASS_COLOR, ha="center", va="bottom", fontsize=9)
-    ax.text((U + np.pi) / 2, y_bar, r"$I_0$", color=STOP_COLOR, ha="center", va="bottom", fontsize=9)
-
-
 def main():
     grid = np.linspace(0.0, np.pi, 4001)
     kap, q2abs2 = field_arrays(S, grid)
 
     # sanity checks before saving
-    kap0 = kap[0]
-    assert abs(kap0 - 1.0) < 1e-10, f"kappa_B(0) != 1: {kap0}"
+    assert abs(kap[0] - 1.0) < 1e-10, f"kappa_B(0) != 1: {kap[0]}"
     for N in N_VALUES:
-        TN0 = T_N(np.array([q2abs2[0]]), np.array([kap0]), N)[0]
+        TN0 = T_N(np.array([q2abs2[0]]), np.array([kap[0]]), N)[0]
         assert abs(TN0 - 1.0) < 1e-10, f"T_{N}(0) != 1: {TN0}"
 
     in_band = np.abs(kap) < 1.0
@@ -64,37 +58,33 @@ def main():
         assert np.all(TN[in_band] >= Tenv_band - 1e-9), f"T_{N} < T_env inside band"
         TN_all[N] = TN
 
-    # sized to sit at 0.9\linewidth in a two-column figure (~3.4in single-column
-    # width) so nominal point sizes below are legible at final print size,
-    # not scaled down further by the placement.
-    plt.rcParams.update({"font.size": 8, "axes.labelsize": 9, "xtick.labelsize": 7.5, "ytick.labelsize": 7.5})
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(3.4, 4.3), sharex=True,
-                                    gridspec_kw={"height_ratios": [1, 1.3]})
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
 
-    ax1.plot(grid, kap, color="#222222", linewidth=1.1)
-    ax1.axhspan(-1, 1, color="#EDEDED", zorder=0)
-    ax1.axhline(1.0, color="#999999", linewidth=0.6)
-    ax1.axhline(-1.0, color="#999999", linewidth=0.6)
+    for ax in (ax1, ax2):
+        ax.axvspan(0, T, color=PASS_TINT, zorder=0)
+        ax.axvspan(U, np.pi, color=STOP_TINT, zorder=0)
+
+    ax1.plot(grid, kap, color="#222222", linewidth=1.6)
+    ax1.axhline(1.0, color="#999999", linewidth=1.0, linestyle="--")
+    ax1.axhline(-1.0, color="#999999", linewidth=1.0, linestyle="--")
     ax1.set_ylabel(r"$\kappa_B(\vartheta)$")
-    ymin = min(kap.min(), -1.2)
-    mark_bands(ax1, ymin - 0.15 * abs(ymin))
-    ax1.set_ylim(ymin - 0.3, max(kap.max(), 1.0) + 0.2)
+    ax1.set_title(r"$\kappa_B$ and $T_N$ at $s=1$ ($t=\pi/4$, $u=3\pi/4$)")
+    ax1.text(T / 2, ax1.get_ylim()[1], r"$I_1$ (pass)", ha="center", va="bottom", fontsize=9, color="#4a7a45")
+    ax1.text((U + np.pi) / 2, ax1.get_ylim()[1], r"$I_0$ (stop)", ha="center", va="bottom", fontsize=9, color="#a06a2a")
 
     for N in N_VALUES:
-        ax2.semilogy(grid, TN_all[N], color=COLORS[N], linestyle=LINESTYLES[N], linewidth=1.0, label=f"$N={N}$")
-    ax2.semilogy(grid[in_band], Tenv_band, color="#555555", linestyle="--", linewidth=0.8, label=r"$T_{\rm env}$")
+        ax2.semilogy(grid, TN_all[N], color=N_COLORS[N], linewidth=1.6, label=f"$N={N}$")
+    ax2.semilogy(grid[in_band], Tenv_band, color="#777777", linewidth=1.3, linestyle="--", label=r"$T_{\rm env}$")
     ax2.set_ylabel(r"$T_N(\vartheta)$")
     ax2.set_xlabel(r"$\vartheta$")
     ax2.set_xlim(0, np.pi)
     ax2.set_xticks([0, T, np.pi / 2, U, np.pi])
-    ax2.set_xticklabels(["0", r"$\pi/4$", r"$\pi/2$", r"$3\pi/4$", r"$\pi$"])
-    mark_bands(ax2, ax2.get_ylim()[0])
-    ax2.legend(loc="lower center", ncol=2, frameon=False, fontsize=7, bbox_to_anchor=(0.5, 1.0),
-               columnspacing=1.0, handlelength=1.8)
+    ax2.set_xticklabels(["0", r"$t=\pi/4$", r"$\pi/2$", r"$u=3\pi/4$", r"$\pi$"])
+    ax2.legend(loc="lower left", frameon=False, fontsize=10)
 
     fig.tight_layout()
     fig.savefig("onelayer_kappa_TN.pdf")
-    fig.savefig("onelayer_kappa_TN.png", dpi=200)
+    fig.savefig("onelayer_kappa_TN.png", dpi=170)
     print("saved onelayer_kappa_TN.pdf, onelayer_kappa_TN.png")
     print("all sanity checks passed")
 
