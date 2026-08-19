@@ -73,14 +73,15 @@ def main():
     ax1.text((U + np.pi) / 2, ax1.get_ylim()[1], r"$I_0$ (stop)", ha="center", va="bottom", fontsize=9, color="#a06a2a")
 
     for N in N_VALUES:
-        ax2.semilogy(grid, TN_all[N], color=N_COLORS[N], linewidth=1.6, label=f"$N={N}$")
-    ax2.semilogy(grid[in_band], Tenv_band, color="#777777", linewidth=1.3, linestyle="--", label=r"$T_{\rm env}$")
+        ax2.plot(grid, TN_all[N], color=N_COLORS[N], linewidth=1.6, label=f"$N={N}$")
+    ax2.plot(grid[in_band], Tenv_band, color="#777777", linewidth=1.3, linestyle="--", label=r"$T_{\rm env}$")
     ax2.set_ylabel(r"$T_N(\vartheta)$")
     ax2.set_xlabel(r"$\vartheta$")
     ax2.set_xlim(0, np.pi)
+    ax2.set_ylim(-0.02, 1.02)
     ax2.set_xticks([0, T, np.pi / 2, U, np.pi])
     ax2.set_xticklabels(["0", r"$t=\pi/4$", r"$\pi/2$", r"$u=3\pi/4$", r"$\pi$"])
-    ax2.legend(loc="lower left", frameon=False, fontsize=10)
+    ax2.legend(loc="upper right", frameon=False, fontsize=10)
 
     fig.tight_layout()
     fig.savefig("onelayer_kappa_TN.pdf")
