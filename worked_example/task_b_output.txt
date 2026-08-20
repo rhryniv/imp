@@ -1,0 +1,26 @@
+
+==================== G1 ====================
+
+  n=1: V_I0(psi)=0.093274  L_cap=12.3563
+    L, predicted<=L_cap, actually_const: [(1, True, True), (2, True, True), (3, True, True), (4, True, True), (5, True, True), (6, True, True), (7, True, True), (8, True, False), (9, True, True), (10, True, False), (11, True, True), (12, True, False), (13, False, False), (14, False, False), (15, False, False), (16, False, False)]
+
+  n=3: V_I0(psi)=0.232821  L_cap=12.8893
+    L, predicted<=L_cap, actually_const: [(3, True, True), (4, True, True), (5, True, True), (6, True, True), (7, True, True), (8, True, False), (9, True, True), (10, True, False), (11, True, True), (12, True, False), (13, False, False), (14, False, False), (15, False, False), (16, False, False)]
+
+  n=5: V_I0(psi)=0.316972  L_cap=13.2107
+    L, predicted<=L_cap, actually_const: [(5, True, True), (6, True, True), (7, True, True), (8, True, False), (9, True, True), (10, True, False), (11, True, True), (12, True, False), (13, True, True), (14, False, False), (15, False, False), (16, False, False)]
+
+  G1 tally: {'predicted_allowed_and_const': 22, 'predicted_allowed_not_const': 9, 'predicted_disallowed_and_const': 0, 'predicted_disallowed_not_const': 11}
+
+==================== G2 ====================
+
+  n=1: V_I0(psi)=0.142084  L_cap=8.36181
+    L, predicted<=L_cap, actually_const: [(1, True, True), (2, True, True), (3, True, True), (4, True, True), (5, True, True), (6, True, False), (7, True, True), (8, True, False), (9, False, False), (10, False, False), (11, False, False), (12, False, False), (13, False, False), (14, False, False), (15, False, False), (16, False, False)]
+
+  n=3: V_I0(psi)=0.308966  L_cap=8.78678
+    L, predicted<=L_cap, actually_const: [(3, True, True), (4, True, True), (5, True, True), (6, True, False), (7, True, True), (8, True, False), (9, False, False), (10, False, False), (11, False, False), (12, False, False), (13, False, False), (14, False, False), (15, False, False), (16, False, False)]
+
+  n=5: V_I0(psi)=0.43069  L_cap=9.09674
+    L, predicted<=L_cap, actually_const: [(5, True, True), (6, True, False), (7, True, True), (8, True, False), (9, True, True), (10, False, False), (11, False, False), (12, False, False), (13, False, False), (14, False, False), (15, False, False), (16, False, False)]
+
+  G2 tally: {'predicted_allowed_and_const': 13, 'predicted_allowed_not_const': 6, 'predicted_disallowed_and_const': 0, 'predicted_disallowed_not_const': 23}

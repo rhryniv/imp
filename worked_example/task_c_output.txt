@@ -1,0 +1,19 @@
+
+==================== G1 (t=1.5708, u=2.6180) ====================
+  n=1: delta*=9.889609e-01  L=2  sign=-1  winner=random  fine_verify={'delta': np.float64(0.988960897982869), 'C_ok': True, 'E_ok': True, 'min_C_slack': 8.832934383917745e-13, 'min_E_slack': 0.0}  (14.5s)
+  n=2: delta*=4.944804e-01  L=2  sign=-1  winner=random  fine_verify={'delta': np.float64(0.49448044899063426), 'C_ok': True, 'E_ok': True, 'min_C_slack': 1.6431300764452317e-14, 'min_E_slack': 0.0}  (18.5s)
+  n=3: delta*=1.602779e-01  L=4  sign=1  winner=random  fine_verify={'delta': np.float64(0.16027893642416102), 'C_ok': True, 'E_ok': False, 'min_C_slack': 1.4210854715202004e-14, 'min_E_slack': -2.6816547802788193e-05}  (36.3s)
+  n=4: delta*=2.888013e-02  L=4  sign=1  winner=random  fine_verify={'delta': np.float64(0.028880418772795124), 'C_ok': True, 'E_ok': False, 'min_C_slack': 8.926193117986259e-14, 'min_E_slack': -2.6816547789021428e-05}  (60.1s)
+  n=5: delta*=1.034697e-02  L=6  sign=-1  winner=random  fine_verify={'delta': np.float64(0.010346971013738715), 'C_ok': True, 'E_ok': False, 'min_C_slack': 0.13040087007402446, 'min_E_slack': -0.00014959460609365038}  (84.4s)
+  n=6: delta*=1.473421e-03  L=6  sign=-1  winner=random  fine_verify={'delta': np.float64(0.001473880575348252), 'C_ok': True, 'E_ok': False, 'min_C_slack': -1.9984014443252818e-15, 'min_E_slack': -6.640809764979494e-06}  (109.8s)
+
+==================== G2 (t=0.7854, u=2.3562) ====================
+  n=1: delta*=4.273372e-01  L=2  sign=-1  winner=random  fine_verify={'delta': np.float64(0.4273372504070687), 'C_ok': True, 'E_ok': True, 'min_C_slack': -1.6483829634594827e-08, 'min_E_slack': -2.220446049250313e-16}  (11.9s)
+  n=2: delta*=6.258207e-02  L=2  sign=-1  winner=random  fine_verify={'delta': np.float64(0.06258209303495366), 'C_ok': True, 'E_ok': True, 'min_C_slack': -4.1744385725905886e-14, 'min_E_slack': 0.0}  (18.8s)
+  n=3: delta*=2.965319e-03  L=4  sign=1  winner=random  fine_verify={'delta': np.float64(0.002965322295255035), 'C_ok': True, 'E_ok': True, 'min_C_slack': -1.7896795156957523e-13, 'min_E_slack': 2.220446049250313e-16}  (36.0s)
+  n=4: delta*=1.991732e-04  L=4  sign=1  winner=n1_padded  fine_verify={'delta': np.float64(0.00019920349551960648), 'C_ok': True, 'E_ok': True, 'min_C_slack': -1.2811973704174306e-13, 'min_E_slack': 0.0}  (60.0s)
+  n=5: delta*=3.230442e-05  L=6  sign=-1  winner=random  fine_verify={'delta': np.float64(3.2322947731477925e-05), 'C_ok': True, 'E_ok': True, 'min_C_slack': -8.704148513061227e-14, 'min_E_slack': 8.881784197001252e-16}  (100.0s)
+  n=6: delta*=1.523968e-06  L=6  sign=-1  winner=random  fine_verify={'delta': np.float64(1.5254827001598414e-06), 'C_ok': True, 'E_ok': True, 'min_C_slack': -1.84297022087776e-14, 'min_E_slack': 0.0}  (132.5s)
+
+total time: 682.7s
+saved task_c_results.json
