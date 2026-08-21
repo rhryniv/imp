@@ -1,0 +1,73 @@
+
+=== Spec A (single I_0) ===
+  n=1  LP=2.167785e-01 (optimal)  SDP=2.167785e-01 (qhat_construction_verified)  closed=0.21677850293821396  reldiff=0.0  hp_crosscheck=ok/0.0  [2.4s]
+  n=2  LP=3.400429e-02 (optimal)  SDP=3.402559e-02 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.1s]
+  n=3  LP=4.288126e-04 (optimal)  SDP=4.288127e-04 (qhat_construction_verified)  closed=0.0004288126923518184  reldiff=0.0  hp_crosscheck=ok/0.0  [0.7s]
+  n=4  LP=3.252054e-05 (optimal)  SDP=3.199269e-05 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.2s]
+  n=5  LP=7.803069e-07 (optimal)  SDP=7.804924e-07 (qhat_construction_verified)  closed=7.804924129279967e-07  reldiff=0.0  hp_crosscheck=ok/0.0  [1.0s]
+  n=6  LP=4.677594e-08 (optimal)  SDP=1.078605e-07 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.4s]
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:50: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  prob.solve(solver=solver)
+  n=7  LP=3.625658e-08 (optimal_inaccurate)  SDP=1.420373e-09 (qhat_construction_verified)  closed=1.4203734831928102e-09  reldiff=0.0  hp_crosscheck=active_set_not_square(0pts)/None  [1.2s]
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Constraint #7 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob.solve(solver=solver)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Constraint #10 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob.solve(solver=solver)
+  n=8  LP=8.012494e-09 (optimal_inaccurate)  SDP=1.059627e-08 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.7s]
+
+=== Spec B (single I_0) ===
+  n=1  LP=2.369589e-01 (optimal)  SDP=2.369589e-01 (qhat_construction_verified)  closed=0.23695892836645158  reldiff=0.0  hp_crosscheck=ok/0.0  [2.4s]
+  n=2  LP=4.063464e-02 (optimal)  SDP=4.065559e-02 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.0s]
+  n=3  LP=5.742415e-04 (optimal)  SDP=5.742416e-04 (qhat_construction_verified)  closed=0.0005742415920014411  reldiff=0.0  hp_crosscheck=ok/0.0  [0.6s]
+  n=4  LP=4.775562e-05 (optimal)  SDP=4.757603e-05 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.2s]
+  n=5  LP=1.269591e-06 (optimal)  SDP=1.269946e-06 (qhat_construction_verified)  closed=1.2699455018961857e-06  reldiff=0.0  hp_crosscheck=ok/0.0  [1.0s]
+  n=6  LP=8.427010e-08 (optimal)  SDP=1.419674e-07 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.4s]
+  n=7  LP=2.337415e-07 (optimal_inaccurate)  SDP=2.807926e-09 (qhat_construction_verified)  closed=2.807925761096627e-09  reldiff=0.0  hp_crosscheck=active_set_not_square(0pts)/None  [1.0s]
+  n=8  LP=1.374342e-08 (optimal_inaccurate)  SDP=2.682467e-08 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.7s]
+
+=== Spec C (disconnected I_0) ===
+  n=1  LP=4.045142e-01 (optimal)  SDP=4.045142e-01 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [0.4s]
+  n=2  LP=1.184412e-01 (optimal)  SDP=1.184506e-01 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.3s]
+  n=3  LP=3.561851e-03 (optimal)  SDP=3.561853e-03 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.1s]
+  n=4  LP=5.201594e-04 (optimal)  SDP=5.185604e-04 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [1.5s]
+  n=5  LP=2.663820e-05 (optimal)  SDP=2.665263e-05 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [2.2s]
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  prob.solve(solver=solver)
+  n=6  LP=4.618515e-05 (optimal_inaccurate)  SDP=1.700585e-06 (optimal_inaccurate)  closed=None  reldiff=None  hp_crosscheck=None/None  [2.0s]
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:84: UserWarning: Constraint #3 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob = cp.Problem(cp.Minimize(delta), constraints)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:84: UserWarning: Constraint #6 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob = cp.Problem(cp.Minimize(delta), constraints)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:84: UserWarning: Constraint #9 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob = cp.Problem(cp.Minimize(delta), constraints)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:84: UserWarning: Constraint #12 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob = cp.Problem(cp.Minimize(delta), constraints)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Constraint #3 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob.solve(solver=solver)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Constraint #6 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob.solve(solver=solver)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Constraint #9 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob.solve(solver=solver)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Constraint #12 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob.solve(solver=solver)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Constraint #4 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob.solve(solver=solver)
+/tmp/claude-0/-home-user-imp/33acfd5a-547f-532e-8d1a-275d66d5849d/scratchpad/numprog/src/e1_sdp.py:85: UserWarning: Constraint #13 contains too many subexpressions. Consider vectorizing your CVXPY code to speed up compilation.
+  prob.solve(solver=solver)
+  n=7  LP=5.787119e-06 (optimal_inaccurate)  SDP=1.656807e-05 (optimal_inaccurate)  closed=None  reldiff=None  hp_crosscheck=None/None  [3.2s]
+  n=8  LP=1.037884e-05 (optimal_inaccurate)  SDP=1.248159e-06 (optimal)  closed=None  reldiff=None  hp_crosscheck=None/None  [2.7s]
+
+total E1 time: 35.6s
+
+=== VALIDATION GATE (odd n, Spec A & B, SDP vs closed form, need <1e-6 reldiff) ===
+  Spec A n=1: reldiff=0.0  PASS
+  Spec A n=3: reldiff=0.0  PASS
+  Spec A n=5: reldiff=0.0  PASS
+  Spec A n=7: reldiff=0.0  PASS
+  Spec B n=1: reldiff=0.0  PASS
+  Spec B n=3: reldiff=0.0  PASS
+  Spec B n=5: reldiff=0.0  PASS
+  Spec B n=7: reldiff=0.0  PASS
+
+GATE OVERALL: PASS
+saved data/e1_results.json

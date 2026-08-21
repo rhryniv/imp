@@ -1,0 +1,12 @@
+=== Spec A ===
+  n=1  delta_n=2.1678e-01  rho=4.4790  hits=0/26  best(L,sigma)=(2, -1)  kappa_min=1.402398  mu_eff=0.8694583856158433
+  n=3  delta_n=4.2881e-04  rho=3.0004  hits=0/22  best(L,sigma)=(4, 1)  kappa_min=1.015789  mu_eff=0.17746883220332488
+  n=5  delta_n=7.8049e-07  rho=2.4075  hits=0/18  best(L,sigma)=(6, -1)  kappa_min=0.401427  mu_eff=None
+  n=7  delta_n=1.4204e-09  rho=2.1004  hits=0/14  best(L,sigma)=(13, 1)  kappa_min=0.000000  mu_eff=None
+=== Spec B ===
+  n=1  delta_n=2.3696e-01  rho=4.2360  hits=0/26  best(L,sigma)=(2, -1)  kappa_min=1.234638  mu_eff=0.672303697947728
+  n=3  delta_n=5.7424e-04  rho=2.7861  hits=0/22  best(L,sigma)=(4, 1)  kappa_min=0.469210  mu_eff=None
+  n=5  delta_n=1.2699e-06  rho=2.2178  hits=0/18  best(L,sigma)=(9, 1)  kappa_min=0.000000  mu_eff=None
+  n=7  delta_n=2.8079e-09  rho=1.9245  hits=0/14  best(L,sigma)=(9, 1)  kappa_min=0.000000  mu_eff=None
+  n=9  delta_n=6.2085e-12  rho=1.7450  hits=0/10  best(L,sigma)=(11, -1)  kappa_min=-0.773524  mu_eff=None
+saved data/e3_results.json
