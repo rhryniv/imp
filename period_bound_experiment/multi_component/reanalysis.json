@@ -1,0 +1,564 @@
+{
+  "A_n3_d1_s1_1": {
+    "diag": {
+      "delta_fine": 0.3987613781831243,
+      "n_active_B": [
+        1
+      ],
+      "n_active_C": [
+        1,
+        0
+      ],
+      "kappa_min_per_C": [
+        1.0526294624828563,
+        24.991303420941207
+      ],
+      "beta_per_active_C": [
+        [
+          42.63632426171367
+        ],
+        []
+      ]
+    },
+    "p4": [
+      {
+        "I0_component": 0,
+        "N": 1,
+        "max_TN_direct": 0.022916687345212437,
+        "eps0_formula": 0.02291668734521244,
+        "betas_used": [
+          42.63632426171367
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 2,
+        "max_TN_direct": 0.0052640140361066715,
+        "eps0_formula": 0.0052640140361062265,
+        "betas_used": [
+          42.63632426171367
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 5,
+        "max_TN_direct": 0.0004342863134883149,
+        "eps0_formula": 0.00043428631348805397,
+        "betas_used": [
+          42.63632426171367
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 9,
+        "max_TN_direct": 3.0421420877839252e-05,
+        "eps0_formula": 3.0421420877790778e-05,
+        "betas_used": [
+          42.63632426171367
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 20,
+        "max_TN_direct": 2.478654425354957e-08,
+        "eps0_formula": 2.478654425343623e-08,
+        "betas_used": [
+          42.63632426171367
+        ]
+      },
+      {
+        "I0_component": 1,
+        "N": 1,
+        "max_TN_direct": 0.0013915408748533269,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 2,
+        "max_TN_direct": 5.577796672696748e-07,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 5,
+        "max_TN_direct": 3.585857466106564e-17,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 9,
+        "max_TN_direct": 9.234924395495856e-31,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 20,
+        "max_TN_direct": 3.937714531542022e-68,
+        "eps0_formula": null,
+        "betas_used": []
+      }
+    ]
+  },
+  "A_n3_d1_s-1_1": {
+    "diag": {
+      "delta_fine": 0.1735323271675997,
+      "n_active_B": [
+        1
+      ],
+      "n_active_C": [
+        1,
+        1
+      ],
+      "kappa_min_per_C": [
+        1.0526294624828947,
+        1.0526294624829045
+      ],
+      "beta_per_active_C": [
+        [
+          1.9966264514531096
+        ],
+        [
+          2.4203422840018427
+        ]
+      ]
+    },
+    "p4": [
+      {
+        "I0_component": 0,
+        "N": 1,
+        "max_TN_direct": 0.47422065989436535,
+        "eps0_formula": 0.3337085940475113,
+        "betas_used": [
+          1.9966264514531096
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 2,
+        "max_TN_direct": 0.10153028139015252,
+        "eps0_formula": 0.10153028139015143,
+        "betas_used": [
+          1.9966264514531096
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 5,
+        "max_TN_direct": 0.009192570777304449,
+        "eps0_formula": 0.009192570777303673,
+        "betas_used": [
+          1.9966264514531096
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 9,
+        "max_TN_direct": 0.0006492225518692485,
+        "eps0_formula": 0.0006492225518691016,
+        "betas_used": [
+          1.9966264514531096
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 20,
+        "max_TN_direct": 5.292961055279333e-07,
+        "eps0_formula": 5.292961055275906e-07,
+        "betas_used": [
+          1.9966264514531096
+        ]
+      },
+      {
+        "I0_component": 1,
+        "N": 1,
+        "max_TN_direct": 0.3004756341998121,
+        "eps0_formula": 0.29236839970004047,
+        "betas_used": [
+          2.4203422840018427
+        ]
+      },
+      {
+        "I0_component": 1,
+        "N": 2,
+        "max_TN_direct": 0.08527158718155042,
+        "eps0_formula": 0.08527158718155094,
+        "betas_used": [
+          2.4203422840018427
+        ]
+      },
+      {
+        "I0_component": 1,
+        "N": 5,
+        "max_TN_direct": 0.007595502032794973,
+        "eps0_formula": 0.007595502032795322,
+        "betas_used": [
+          2.4203422840018427
+        ]
+      },
+      {
+        "I0_component": 1,
+        "N": 9,
+        "max_TN_direct": 0.0005356276556884031,
+        "eps0_formula": 0.0005356276556884685,
+        "betas_used": [
+          2.4203422840018427
+        ]
+      },
+      {
+        "I0_component": 1,
+        "N": 20,
+        "max_TN_direct": 4.366352271152602e-07,
+        "eps0_formula": 4.366352271154138e-07,
+        "betas_used": [
+          2.4203422840018427
+        ]
+      }
+    ]
+  },
+  "A_n3_d3_s1_-1": {
+    "diag": {
+      "delta_fine": 0.00962563923049542,
+      "n_active_B": [
+        1
+      ],
+      "n_active_C": [
+        1,
+        0
+      ],
+      "kappa_min_per_C": [
+        1.0526294624829033,
+        2.692779954634653
+      ],
+      "beta_per_active_C": [
+        [
+          2.012630998426432
+        ],
+        []
+      ]
+    },
+    "p4": [
+      {
+        "I0_component": 0,
+        "N": 1,
+        "max_TN_direct": 0.3319357732567724,
+        "eps0_formula": 0.3319357732567724,
+        "betas_used": [
+          2.012630998426432
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 2,
+        "max_TN_direct": 0.10080429405886543,
+        "eps0_formula": 0.10080429405886579,
+        "betas_used": [
+          2.012630998426432
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 5,
+        "max_TN_direct": 0.009120137653922163,
+        "eps0_formula": 0.009120137653922446,
+        "betas_used": [
+          2.012630998426432
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 9,
+        "max_TN_direct": 0.0006440632252520757,
+        "eps0_formula": 0.0006440632252521292,
+        "betas_used": [
+          2.012630998426432
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 20,
+        "max_TN_direct": 5.250871174207298e-07,
+        "eps0_formula": 5.25087117420855e-07,
+        "betas_used": [
+          2.012630998426432
+        ]
+      },
+      {
+        "I0_component": 1,
+        "N": 1,
+        "max_TN_direct": 0.031248287744738746,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 2,
+        "max_TN_direct": 0.0011108855038347986,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 5,
+        "max_TN_direct": 5.6552338385322214e-08,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 9,
+        "max_TN_direct": 1.0693227811377649e-13,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 20,
+        "max_TN_direct": 1.949481472340516e-29,
+        "eps0_formula": null,
+        "betas_used": []
+      }
+    ]
+  },
+  "A_n5_d1_s1_-1": {
+    "diag": {
+      "delta_fine": 4.679160384579717e-05,
+      "n_active_B": [
+        3
+      ],
+      "n_active_C": [
+        1,
+        0
+      ],
+      "kappa_min_per_C": [
+        1.0526294624829047,
+        6.282389037311183
+      ],
+      "beta_per_active_C": [
+        [
+          0.8650512260107204
+        ],
+        []
+      ]
+    },
+    "p4": [
+      {
+        "I0_component": 0,
+        "N": 1,
+        "max_TN_direct": 0.5361783022651689,
+        "eps0_formula": 0.5361783022651689,
+        "betas_used": [
+          0.8650512260107204
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 2,
+        "max_TN_direct": 0.2068677341925784,
+        "eps0_formula": 0.20686773419257942,
+        "betas_used": [
+          0.8650512260107204
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 5,
+        "max_TN_direct": 0.020965287049170462,
+        "eps0_formula": 0.020965287049171485,
+        "betas_used": [
+          0.8650512260107204
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 9,
+        "max_TN_direct": 0.0014972003639799677,
+        "eps0_formula": 0.0014972003639801622,
+        "betas_used": [
+          0.8650512260107204
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 20,
+        "max_TN_direct": 1.221668545707436e-06,
+        "eps0_formula": 1.2216685457078955e-06,
+        "betas_used": [
+          0.8650512260107204
+        ]
+      },
+      {
+        "I0_component": 1,
+        "N": 1,
+        "max_TN_direct": 0.011933397873609482,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 2,
+        "max_TN_direct": 7.649534956428222e-05,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 5,
+        "max_TN_direct": 2.020077500230619e-11,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 9,
+        "max_TN_direct": 3.4225416012403566e-20,
+        "eps0_formula": null,
+        "betas_used": []
+      },
+      {
+        "I0_component": 1,
+        "N": 20,
+        "max_TN_direct": 2.594452192382433e-44,
+        "eps0_formula": null,
+        "betas_used": []
+      }
+    ]
+  },
+  "B_n3_d1_s-1": {
+    "diag": {
+      "delta_fine": 1.1236911809076608,
+      "n_active_B": [
+        1,
+        1
+      ],
+      "n_active_C": [
+        1
+      ],
+      "kappa_min_per_C": [
+        1.0526294624828934
+      ],
+      "beta_per_active_C": [
+        [
+          3.170400485357278
+        ]
+      ]
+    },
+    "p4": [
+      {
+        "I0_component": 0,
+        "N": 1,
+        "max_TN_direct": 0.23978512459681198,
+        "eps0_formula": 0.23978512459681198,
+        "betas_used": [
+          3.170400485357278
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 2,
+        "max_TN_direct": 0.06643820783964832,
+        "eps0_formula": 0.06643820783964742,
+        "betas_used": [
+          3.170400485357278
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 5,
+        "max_TN_direct": 0.005808985019201342,
+        "eps0_formula": 0.005808985019200747,
+        "betas_used": [
+          3.170400485357278
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 9,
+        "max_TN_direct": 0.00040895986798600363,
+        "eps0_formula": 0.0004089598679858918,
+        "betas_used": [
+          3.170400485357278
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 20,
+        "max_TN_direct": 3.333354309406381e-07,
+        "eps0_formula": 3.33335430940377e-07,
+        "betas_used": [
+          3.170400485357278
+        ]
+      }
+    ]
+  },
+  "B_n5_d1_s1": {
+    "diag": {
+      "delta_fine": 1.6945134584101647,
+      "n_active_B": [
+        0,
+        1
+      ],
+      "n_active_C": [
+        1
+      ],
+      "kappa_min_per_C": [
+        1.0526294625118051
+      ],
+      "beta_per_active_C": [
+        [
+          8.876619219516014
+        ]
+      ]
+    },
+    "p4": [
+      {
+        "I0_component": 0,
+        "N": 1,
+        "max_TN_direct": 0.10124922078842716,
+        "eps0_formula": 0.10124922078842716,
+        "betas_used": [
+          8.876619219516014
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 2,
+        "max_TN_direct": 0.024787940134427516,
+        "eps0_formula": 0.024787940135755086,
+        "betas_used": [
+          8.876619219516014
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 5,
+        "max_TN_direct": 0.0020825315177447705,
+        "eps0_formula": 0.002082531518552238,
+        "betas_used": [
+          8.876619219516014
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 9,
+        "max_TN_direct": 0.00014610376770850332,
+        "eps0_formula": 0.0001461037678588403,
+        "betas_used": [
+          8.876619219516014
+        ]
+      },
+      {
+        "I0_component": 0,
+        "N": 20,
+        "max_TN_direct": 1.1905512777290649e-07,
+        "eps0_formula": 1.1905512812463853e-07,
+        "betas_used": [
+          8.876619219516014
+        ]
+      }
+    ]
+  }
+}
