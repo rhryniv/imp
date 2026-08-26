@@ -1,0 +1,22 @@
+=== Gate (spec Sec 4) ===
+Gate (Sec 6.2, n=3,d=1,sigma=+1): delta=0.00046722217332795246 (target 4.6722e-4)  nconv=209/250  wall=23.1s  -> PASS
+
+=== Full 15-case sweep ===
+n3_d1  sigma=1  INFEASIBLE  [0/250 converged, 38.6s]
+n3_d3  sigma=-1  INFEASIBLE  [0/250 converged, 47.5s]
+n3_d5  sigma=1  INFEASIBLE  [0/250 converged, 44.2s]
+n3_d7  sigma=-1  INFEASIBLE  [0/250 converged, 43.8s]
+n3_d9  sigma=1  INFEASIBLE  [0/250 converged, 30.0s]
+n5_d1  sigma=-1  delta=3.287141e-02  [178/250 converged, start=random, 72.5s]
+n5_d3  sigma=1  INFEASIBLE  [0/251 converged, 149.6s]
+n5_d5  sigma=-1  INFEASIBLE  [0/250 converged, 107.3s]
+n5_d7  sigma=1  INFEASIBLE  [0/250 converged, 87.5s]
+n5_d9  sigma=-1  INFEASIBLE  [0/250 converged, 73.1s]
+n7_d1  sigma=1  delta=1.722164e-02  [1/251 converged, start=random, 229.3s]
+n7_d3  sigma=-1  INFEASIBLE  [0/251 converged, 292.0s]
+n7_d5  sigma=1  INFEASIBLE  [0/250 converged, 336.5s]
+n7_d7  sigma=-1  INFEASIBLE  [0/250 converged, 203.3s]
+n7_d9  sigma=1  INFEASIBLE  [0/250 converged, 223.3s]
+
+total Geometry-C sweep time: 1978.5s
+saved results_C_checkpoint.json

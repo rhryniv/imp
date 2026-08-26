@@ -1,0 +1,61 @@
+{
+  "mu0": 0.32303,
+  "cosh_mu0": 1.0526294624848421,
+  "geometry_C": {
+    "description": "two pass components, one stop, pi in I0 (the single-change counterpart to Sec 6.2, varying only m1)",
+    "I1": [[0.0, "0.20*pi = 0.6283185307179586"], ["0.40*pi = 1.2566370614359172", "0.55*pi = 1.7278759594743864"]],
+    "I0": [["0.78*pi = 2.4504422318573557", "pi = 3.141592653589793"]],
+    "m1": 2, "m0": 1,
+    "d_cap": "2*pi/|I0| = 2*pi/(0.22*pi) = 9.0909...",
+    "enumeration_forced": {
+      "L_must_be_even": "kappa(pi)=0 for odd L, contradicting (C); pi in I0",
+      "sigma_forced": "sigma=(-1)^(L/2) = (-1)^((n+d)/2), NOT a free parameter (single stop component)",
+      "d_values_enumerated": [1, 3, 5, 7, 9],
+      "excluded_a_priori": "even d and the non-forced sign were NOT enumerated -- infeasible as theorems (spec Sec 3), not searched, not counted against budget"
+    }
+  },
+  "gate_geometry_G62": {"I1": [[0.0, "pi/4"]], "I0": [["5*pi/6", "pi"]]},
+  "cases": {"n_values": [3, 5, 7], "d_values": [1, 3, 5, 7, 9], "n_cases_total": 15},
+  "grids": {
+    "opt_nodes_per_component": 801,
+    "fine_verification_nodes_per_component": 16001,
+    "E_grid": "I1 grids with theta=0 dropped from the first component only (kappa(0)=1 identically) -- both for the optimisation constraint and for the reported active-E count (a) and (max_abs_kappa_I1_excluding_zero)"
+  },
+  "constraints": {
+    "A_and_D": "automatic and exact (not imposed)",
+    "B": "delta >= max_{G1}(Q-1) over both I1 components, epigraph",
+    "C": "sigma*kappa(theta) >= cosh(mu0) on I0 (single component)",
+    "E": "|kappa(theta)| <= 1 on the E grid (both I1 components, theta=0 dropped)"
+  },
+  "solver": {
+    "name": "scipy.optimize.minimize", "method": "SLSQP",
+    "ftol": 1e-14, "maxiter": 500,
+    "objective_gradient": "analytic (grad = e_n)",
+    "constraint_jacobian": "finite-difference (SLSQP default)",
+    "bounds": {"alpha_j": [-20.0, 20.0], "delta": [0.0, 10.0]},
+    "U_m_for_T_N": "three-term Chebyshev recurrence (U_0=1, U_1=2x, U_m=2x U_{m-1}-U_{m-2}), NOT the sin/sinh division-based closed form, per this spec's explicit instruction"
+  },
+  "starts": {
+    "n_random": 200, "n_antisym": 50,
+    "random_distribution": "alpha_j ~ N(0,0.35^2) i.i.d., matched via alpha_n",
+    "antisym_distribution": "free half ~ N(0,0.35^2), filled via alpha_j=-alpha_{n-j}",
+    "continuation": [
+      "best alpha_first at (n,d-2), reused directly as a raw starting point",
+      "best alpha_first at (n-2,d), embedded via a zero-contrast layer at each end"
+    ],
+    "continuation_sigma_note": "sigma here is a single value (not split free/forced) and is entirely re-derived at the target (n,d) as (-1)^((n+d)/2) -- it also flips between d and d-2, same mechanism as Geometry A's forced component -- so continuation carries only the numerical alpha, never a sigma",
+    "probe_seed": {
+      "note": "The brief cites a known feasible point (n=5,d=1,sigma=-1, delta~=3.29e-2) but supplies no explicit alpha vector to seed with, so no dedicated 'probe' start type was constructed -- this cell was solved with the standard random+antisym+continuation start set only, and its recovered value (0.032871412424680946) is checked post-hoc against the cited ~3.29e-2 as a validation, not injected as a seed.",
+      "recovered_delta": 0.032871412424680946,
+      "cited_probe_delta": 0.0329,
+      "check": "PASS -- matches to the precision the brief quoted"
+    },
+    "discard_rule": "SLSQP res.success==False discarded; else fine-grid (16001-node) feasibility at tol 1e-9"
+  },
+  "gate": {"case": "n=3,d=1,sigma=+1 on the G62 geometry", "target_delta": 4.6722e-4,
+           "result_delta": 0.00046722217332795246, "pass": true},
+  "rng": {"gate_seed": 20260828, "sweep_seed": 20260928,
+          "note": "sweep_seed = 20260828+100, one stream consumed sequentially in n(3,5,7) x d(1,3,5,7,9) order"},
+  "software": {"python": "3.11", "numpy": "2.4.6", "scipy": "1.17.1"},
+  "wall_time": {"gate_s": 23.1, "full_sweep_s": 1978.5}
+}
